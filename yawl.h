@@ -16,30 +16,8 @@
 #endif // _WIN32
 
 #ifdef YAWL_WIN32
-struct _YaWin32Funcs {
-	bool loaded;
-	HMODULE gdi32;
-	HMODULE user32;
-	HMODULE kernel32;
 
-	HWND (*CreateWindowExA)(
-		DWORD, LPCSTR, LPCSTR, DWORD,
-		int, int, int, int,
-		HWND, HMENU, HINSTANCE, LPVOID);
-	BOOL (*ShowWindow)(HWND, int);
-	BOOL (*UpdateWindow)(HWND);
-	BOOL (*SetWindowTextA)(HWND, LPCSTR);
-	HDC (*GetDC)(HWND);
-	int (*ReleaseDC)(HWND, HDC);
-	BOOL (*SwapBuffers)(HDC);
-	HINSTANCE (*GetModuleHandleA)(LPCSTR);
-	HGDIOBJ (*GetStockObject)(int);
-};
 
-typedef struct {
-	HWND hwnd;
-	HDC hdc;
-} YaWin32Window;
 #endif // YAWL_WIN32
 
 #ifdef YAWL_X11
@@ -99,7 +77,8 @@ typedef struct {
 	X11Window win;
 #endif // YAWL_X11
 #ifdef YAWL_WIN32
-	YaWin32Window w32;
+	HWND hwnd;
+	HDC hdc;
 #endif // YAWL_WIN32
 } YaWindowData;
 
@@ -110,8 +89,10 @@ typedef struct {
 	struct _YaX11Funcs x;
 #endif // YAWL_X11
 #ifdef YAWL_WIN32
-	struct _YaWin32Funcs w32;
 	HINSTANCE hinstance;
+	HMODULE gdi32;
+	HMODULE user32;
+	HMODULE kernel32;
 #endif
 } YaState;
 
@@ -217,55 +198,30 @@ static LRESULT CALLBACK _YaWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 	return DefWindowProcA(hwnd, msg, wparam, lparam);
 }
 
-static bool _YaWin32Load(YaState *s)
-{
-	s->w32.user32 = LoadLibraryA("user32.dll");
-	s->w32.gdi32 = LoadLibraryA("gdi32.dll");
-	s->w32.kernel32 = LoadLibraryA("kernel32.dll");
-	if (!s->w32.user32 || !s->w32.gdi32 || !s->w32.kernel32)
-		return false;
-
-	YA_LOAD_SYMBOL(s->w32.CreateWindowExA, s->w32.user32, "CreateWindowExA");
-	YA_LOAD_SYMBOL(s->w32.ShowWindow, s->w32.user32, "ShowWindow");
-	YA_LOAD_SYMBOL(s->w32.UpdateWindow, s->w32.user32, "UpdateWindow");
-	YA_LOAD_SYMBOL(s->w32.SetWindowTextA, s->w32.user32, "SetWindowTextA");
-	YA_LOAD_SYMBOL(s->w32.GetDC, s->w32.user32, "GetDC");
-	YA_LOAD_SYMBOL(s->w32.ReleaseDC, s->w32.user32, "ReleaseDC");
-	YA_LOAD_SYMBOL(s->w32.GetModuleHandleA, s->w32.kernel32, "GetModuleHandleA");
-	YA_LOAD_SYMBOL(s->w32.SwapBuffers, s->w32.gdi32, "SwapBuffers");
-	YA_LOAD_SYMBOL(s->w32.GetStockObject, s->w32.gdi32, "GetStockObject");
-
-	s->w32.loaded = true;
-	return true;
-}
-
 static bool _YaInitWindowWin32(YaState *s, YaWindowData *w, const char *name)
 {
-	if (!s->w32.loaded && !_YaWin32Load(s))
-		return false;
-
-	s->hinstance = s->w32.GetModuleHandleA(NULL);
+	s->hinstance = GetModuleHandleA(NULL);
 
 	WNDCLASSA wc = { 0 };
 	wc.lpfnWndProc = _YaWndProc;
 	wc.hInstance = s->hinstance;
 	wc.lpszClassName = "YaWindowClass";
-	wc.hbrBackground = (HBRUSH)s->w32.GetStockObject(BLACK_BRUSH);
+	wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
 	RegisterClassA(&wc);
 
-	w->w32.hwnd = s->w32.CreateWindowExA(
+	w->hwnd = CreateWindowExA(
 		0, "YaWindowClass", name,
 		WS_OVERLAPPEDWINDOW,
 		CW_USEDEFAULT, CW_USEDEFAULT,
 		(int)w->width, (int)w->height,
 		NULL, NULL, s->hinstance, NULL);
 
-	if (!w->w32.hwnd)
+	if (!w->hwnd)
 		return false;
 
-	s->w32.ShowWindow(w->w32.hwnd, SW_SHOW);
-	s->w32.UpdateWindow(w->w32.hwnd);
-	w->w32.hdc = s->w32.GetDC(w->w32.hwnd);
+	ShowWindow(w->hwnd, SW_SHOW);
+	UpdateWindow(w->hwnd);
+	w->hdc = GetDC(w->hwnd);
 	return true;
 }
 #endif //YAWL_WIN32
@@ -303,7 +259,7 @@ void YaEndDrawing(YaState *s, YaWindowData *w)
 	s->x.Flush(w->dpy);
 #endif // YAWL_X11
 #ifdef YAWL_WIN32
-	s->w32.SwapBuffers(w->w32.hdc);
+	SwapBuffers(w->hdc);
 #endif // YAWL_WIN32
 }
 
