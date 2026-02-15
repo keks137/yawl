@@ -26,7 +26,7 @@ typedef struct _X11Display X11Display;
 typedef unsigned long X11ID;
 typedef X11ID X11Window;
 
-struct _YaX11Funcs {
+struct _YwX11Funcs {
 	bool loaded;
 	X11Display *(*OpenDisplay)(const char *);
 	int (*DefaultScreen)(X11Display *);
@@ -80,13 +80,13 @@ typedef struct {
 	HWND hwnd;
 	HDC hdc;
 #endif // YAWL_WIN32
-} YaWindowData;
+} YwWindowData;
 
 typedef struct {
 	bool initialized;
 #ifdef YAWL_X11
 	int xscreen;
-	struct _YaX11Funcs x;
+	struct _YwX11Funcs x;
 #endif // YAWL_X11
 #ifdef YAWL_WIN32
 	HINSTANCE hinstance;
@@ -94,28 +94,28 @@ typedef struct {
 	HMODULE user32;
 	HMODULE kernel32;
 #endif
-} YaState;
+} YwState;
 
-#ifndef YaMemset
+#ifndef YwMemset
 #include <string.h>
-#define YaMemset(ptr, val, n_bytes) memset(ptr, val, n_bytes)
-#endif //YaMemset
+#define YwMemset(ptr, val, n_bytes) memset(ptr, val, n_bytes)
+#endif //YwMemset
 
 #if defined(_MSC_VER)
 #include <malloc.h>
-#define YaAlloca(size) _alloca(size)
+#define YwAlloca(size) _alloca(size)
 #else //  __GNUC__
-#define YaAlloca(size) __builtin_alloca(size)
+#define YwAlloca(size) __builtin_alloca(size)
 #endif
 
-bool YaInitWindow(YaState *s, YaWindowData *w, const char *name);
-void YaBeginDrawing(YaState *s, YaWindowData *w);
-void YaEndDrawing(YaState *s, YaWindowData *w);
+bool YwInitWindow(YwState *s, YwWindowData *w, const char *name);
+void YwBeginDrawing(YwState *s, YwWindowData *w);
+void YwEndDrawing(YwState *s, YwWindowData *w);
 
 #ifdef YAWL_IMPLEMENTATION
 
 #ifdef YAWL_X11
-#define YA_LOAD_SYMBOL(sym, lib, name)                                 \
+#define YW_LOAD_SYMBOL(sym, lib, name)                                 \
 	do {                                                           \
 		void *tmp_symbol = dlsym(lib, name);                   \
 		if (tmp_symbol == NULL) {                              \
@@ -125,30 +125,30 @@ void YaEndDrawing(YaState *s, YaWindowData *w);
 		sym = tmp_symbol;                                      \
 	} while (0)
 
-static bool _YaX11Load(YaState *s)
+static bool _YwX11Load(YwState *s)
 {
 	void *lib = dlopen("libX11.so", RTLD_NOW);
 	if (!lib) {
 		fprintf(stderr, "no x11: %s\n", dlerror());
 		return false;
 	}
-	YA_LOAD_SYMBOL(s->x.OpenDisplay, lib, "XOpenDisplay");
-	YA_LOAD_SYMBOL(s->x.DefaultScreen, lib, "XDefaultScreen");
-	YA_LOAD_SYMBOL(s->x.CreateSimpleWindow, lib, "XCreateSimpleWindow");
-	YA_LOAD_SYMBOL(s->x.RootWindow, lib, "XRootWindow");
-	YA_LOAD_SYMBOL(s->x.BlackPixel, lib, "XBlackPixel");
-	YA_LOAD_SYMBOL(s->x.WhitePixel, lib, "XWhitePixel");
-	YA_LOAD_SYMBOL(s->x.StoreName, lib, "XStoreName");
-	YA_LOAD_SYMBOL(s->x.MapWindow, lib, "XMapWindow");
-	YA_LOAD_SYMBOL(s->x.Flush, lib, "XFlush");
+	YW_LOAD_SYMBOL(s->x.OpenDisplay, lib, "XOpenDisplay");
+	YW_LOAD_SYMBOL(s->x.DefaultScreen, lib, "XDefaultScreen");
+	YW_LOAD_SYMBOL(s->x.CreateSimpleWindow, lib, "XCreateSimpleWindow");
+	YW_LOAD_SYMBOL(s->x.RootWindow, lib, "XRootWindow");
+	YW_LOAD_SYMBOL(s->x.BlackPixel, lib, "XBlackPixel");
+	YW_LOAD_SYMBOL(s->x.WhitePixel, lib, "XWhitePixel");
+	YW_LOAD_SYMBOL(s->x.StoreName, lib, "XStoreName");
+	YW_LOAD_SYMBOL(s->x.MapWindow, lib, "XMapWindow");
+	YW_LOAD_SYMBOL(s->x.Flush, lib, "XFlush");
 
 	s->x.loaded = true;
 	return true;
 }
-static bool _YaInitWindowX11(YaState *s, YaWindowData *w, const char *name)
+static bool _YwInitWindowX11(YwState *s, YwWindowData *w, const char *name)
 {
 	if (!s->x.loaded)
-		if (!_YaX11Load(s))
+		if (!_YwX11Load(s))
 			return false;
 
 	w->dpy = s->x.OpenDisplay(NULL);
@@ -177,7 +177,7 @@ static bool _YaInitWindowX11(YaState *s, YaWindowData *w, const char *name)
 }
 #endif // YAWL_X11
 #if defined(YAWL_WIN32)
-#define YA_LOAD_SYMBOL(sym, lib, name)                                   \
+#define YW_LOAD_SYMBOL(sym, lib, name)                                   \
 	do {                                                             \
 		FARPROC tmp = GetProcAddress(lib, name);                 \
 		if (!tmp) {                                              \
@@ -187,7 +187,7 @@ static bool _YaInitWindowX11(YaState *s, YaWindowData *w, const char *name)
 		sym = (void *)tmp;                                       \
 	} while (0)
 
-static LRESULT CALLBACK _YaWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
 	(void)wparam;
 	(void)lparam;
@@ -198,19 +198,19 @@ static LRESULT CALLBACK _YaWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 	return DefWindowProcA(hwnd, msg, wparam, lparam);
 }
 
-static bool _YaInitWindowWin32(YaState *s, YaWindowData *w, const char *name)
+static bool _YwInitWindowWin32(YwState *s, YwWindowData *w, const char *name)
 {
 	s->hinstance = GetModuleHandleA(NULL);
 
 	WNDCLASSA wc = { 0 };
-	wc.lpfnWndProc = _YaWndProc;
+	wc.lpfnWndProc = _YwWndProc;
 	wc.hInstance = s->hinstance;
-	wc.lpszClassName = "YaWindowClass";
+	wc.lpszClassName = "YwWindowClass";
 	wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
 	RegisterClassA(&wc);
 
 	w->hwnd = CreateWindowExA(
-		0, "YaWindowClass", name,
+		0, "YwWindowClass", name,
 		WS_OVERLAPPEDWINDOW,
 		CW_USEDEFAULT, CW_USEDEFAULT,
 		(int)w->width, (int)w->height,
@@ -226,34 +226,34 @@ static bool _YaInitWindowWin32(YaState *s, YaWindowData *w, const char *name)
 }
 #endif //YAWL_WIN32
 
-bool YaInit(YaState *s)
+bool YwInit(YwState *s)
 {
 	s->initialized = true;
 	return true;
 }
 
-bool YaInitWindow(YaState *s, YaWindowData *w, const char *name)
+bool YwInitWindow(YwState *s, YwWindowData *w, const char *name)
 {
 	if (!s->initialized) {
-		if (!YaInit(s))
+		if (!YwInit(s))
 			return false;
 	}
 #ifdef YAWL_X11
-	return _YaInitWindowX11(s, w, name);
+	return _YwInitWindowX11(s, w, name);
 #elif defined(YAWL_WIN32)
-	return _YaInitWindowWin32(s, w, name);
+	return _YwInitWindowWin32(s, w, name);
 #else
-	fprintf(stderr, "Yawl: Unsupported platform\n");
+	fprintf(stderr, "Ywwl: Unsupported platform\n");
 	return false;
 #endif
 	return true;
 }
 #endif // YAWL_IMPLEMENTATION
 
-void YaBeginDrawing(YaState *s, YaWindowData *w)
+void YwBeginDrawing(YwState *s, YwWindowData *w)
 {
 }
-void YaEndDrawing(YaState *s, YaWindowData *w)
+void YwEndDrawing(YwState *s, YwWindowData *w)
 {
 #ifdef YAWL_X11
 	s->x.Flush(w->dpy);
