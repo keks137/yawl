@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #if defined(_WIN32)
 #define YAWL_WIN32
@@ -17,10 +18,11 @@
 
 #ifdef YAWL_WIN32
 
-
 #endif // YAWL_WIN32
 
 #ifdef YAWL_X11
+#include <xcb/xcb.h>
+#include <xcb/xproto.h>
 struct _X11Display;
 typedef struct _X11Display X11Display;
 typedef unsigned long X11ID;
@@ -28,43 +30,49 @@ typedef X11ID X11Window;
 
 struct _YwX11Funcs {
 	bool loaded;
-	X11Display *(*OpenDisplay)(const char *);
-	int (*DefaultScreen)(X11Display *);
-	X11Window (*CreateSimpleWindow)(
-		X11Display * /* display */,
-		X11Window /* parent */,
-		int /* x */,
-		int /* y */,
-		unsigned int /* width */,
-		unsigned int /* height */,
-		unsigned int /* border_width */,
-		unsigned long /* border */,
-		unsigned long /* background */
-	);
-	X11Window (*RootWindow)(
-		X11Display * /* display */,
-		int /* screen_number */
-	);
-	unsigned long (*BlackPixel)(
-		X11Display * /* display */,
-		int /* screen_number */
-	);
-	unsigned long (*WhitePixel)(
-		X11Display * /* display */,
-		int /* screen_number */
-	);
-	int (*StoreName)(
-		X11Display * /* display */,
-		X11Window /* w */,
-		const char * /* window_name */
-	);
-	int (*MapWindow)(
-		X11Display * /* display */,
-		X11Window /* w */
-	);
-	int (*Flush)(
-		X11Display * /* display */
-	);
+	xcb_connection_t *(*connect)(const char *displayname, int *screenp);
+	void (*disconnect)(xcb_connection_t *c);
+	xcb_screen_iterator_t (*setup_roots_iterator)(xcb_setup_t *R);
+	int (*flush)(xcb_connection_t *c);
+	uint32_t (*generate_id)(xcb_connection_t *c);
+	xcb_void_cookie_t (*create_window)(
+		xcb_connection_t *c,
+		uint8_t depth,
+		xcb_window_t wid,
+		xcb_window_t parent,
+		int16_t x,
+		int16_t y,
+		uint16_t width,
+		uint16_t height,
+		uint16_t border_width,
+		uint16_t _class,
+		xcb_visualid_t visual,
+		uint32_t value_mask,
+		const void *value_list);
+	xcb_void_cookie_t (*map_window)(xcb_connection_t *c, xcb_window_t window);
+	xcb_void_cookie_t (*change_property)(
+		xcb_connection_t *c,
+		uint8_t mode,
+		xcb_window_t window,
+		xcb_atom_t property,
+		xcb_atom_t type,
+		uint8_t format,
+		uint32_t data_len,
+		const void *data);
+	xcb_intern_atom_cookie_t (*intern_atom)(
+		xcb_connection_t *c,
+		uint8_t only_if_exists,
+		uint16_t name_len,
+		const char *name);
+	xcb_intern_atom_reply_t *(*intern_atom_reply)(
+		xcb_connection_t *c,
+		xcb_intern_atom_cookie_t cookie,
+		xcb_generic_error_t **e);
+	xcb_generic_event_t *(*poll_for_event)(xcb_connection_t *c);
+	void (*request_check)(xcb_connection_t *c, xcb_void_cookie_t cookie);
+	struct xcb_setup_t *(*get_setup)(xcb_connection_t *c);
+	void (*screen_next)(xcb_screen_iterator_t *i);
+	int (*connection_has_error)(xcb_connection_t *c);
 };
 
 #endif //YAWL_X11
@@ -73,8 +81,9 @@ typedef struct {
 	size_t width;
 	size_t height;
 #ifdef YAWL_X11
-	X11Display *dpy;
-	X11Window win;
+	xcb_connection_t *conn;
+	xcb_window_t win;
+	xcb_screen_t *screen;
 #endif // YAWL_X11
 #ifdef YAWL_WIN32
 	HWND hwnd;
@@ -85,7 +94,9 @@ typedef struct {
 typedef struct {
 	bool initialized;
 #ifdef YAWL_X11
-	int xscreen;
+	int screen_num;
+	xcb_atom_t wm_protocols;
+	xcb_atom_t wm_delete_window;
 	struct _YwX11Funcs x;
 #endif // YAWL_X11
 #ifdef YAWL_WIN32
@@ -127,23 +138,56 @@ void YwEndDrawing(YwState *s, YwWindowData *w);
 
 static bool _YwX11Load(YwState *s)
 {
-	void *lib = dlopen("libX11.so", RTLD_NOW);
+	void *lib = dlopen("libxcb.so.1", RTLD_NOW | RTLD_LOCAL);
 	if (!lib) {
-		fprintf(stderr, "no x11: %s\n", dlerror());
+		lib = dlopen("libxcb.so", RTLD_NOW | RTLD_LOCAL);
+	}
+	if (!lib) {
+		fprintf(stderr, "no xcb: %s\n", dlerror());
 		return false;
 	}
-	YW_LOAD_SYMBOL(s->x.OpenDisplay, lib, "XOpenDisplay");
-	YW_LOAD_SYMBOL(s->x.DefaultScreen, lib, "XDefaultScreen");
-	YW_LOAD_SYMBOL(s->x.CreateSimpleWindow, lib, "XCreateSimpleWindow");
-	YW_LOAD_SYMBOL(s->x.RootWindow, lib, "XRootWindow");
-	YW_LOAD_SYMBOL(s->x.BlackPixel, lib, "XBlackPixel");
-	YW_LOAD_SYMBOL(s->x.WhitePixel, lib, "XWhitePixel");
-	YW_LOAD_SYMBOL(s->x.StoreName, lib, "XStoreName");
-	YW_LOAD_SYMBOL(s->x.MapWindow, lib, "XMapWindow");
-	YW_LOAD_SYMBOL(s->x.Flush, lib, "XFlush");
 
+	YW_LOAD_SYMBOL(s->x.connect, lib, "xcb_connect");
+	YW_LOAD_SYMBOL(s->x.disconnect, lib, "xcb_disconnect");
+	YW_LOAD_SYMBOL(s->x.setup_roots_iterator, lib, "xcb_setup_roots_iterator");
+	YW_LOAD_SYMBOL(s->x.flush, lib, "xcb_flush");
+	YW_LOAD_SYMBOL(s->x.generate_id, lib, "xcb_generate_id");
+	YW_LOAD_SYMBOL(s->x.create_window, lib, "xcb_create_window");
+	YW_LOAD_SYMBOL(s->x.map_window, lib, "xcb_map_window");
+	YW_LOAD_SYMBOL(s->x.change_property, lib, "xcb_change_property");
+	YW_LOAD_SYMBOL(s->x.intern_atom, lib, "xcb_intern_atom");
+	YW_LOAD_SYMBOL(s->x.intern_atom_reply, lib, "xcb_intern_atom_reply");
+	YW_LOAD_SYMBOL(s->x.poll_for_event, lib, "xcb_poll_for_event");
+	YW_LOAD_SYMBOL(s->x.request_check, lib, "xcb_request_check");
+	YW_LOAD_SYMBOL(s->x.get_setup, lib, "xcb_get_setup");
+	YW_LOAD_SYMBOL(s->x.screen_next, lib, "xcb_screen_next");
+	YW_LOAD_SYMBOL(s->x.connection_has_error, lib, "xcb_connection_has_error");
 	s->x.loaded = true;
+
 	return true;
+}
+
+static bool _YwEGLLoad(YwState *s)
+{
+	void *egl = dlopen("libEGL.so.1", RTLD_NOW | RTLD_LOCAL);
+	if (!egl)
+		egl = dlopen("libEGL.so", RTLD_NOW | RTLD_LOCAL);
+	if (!egl) {
+		fprintf(stderr, "no EGL: %s\n", dlerror());
+		return false;
+	}
+
+	return true;
+}
+
+static xcb_screen_t *_YwGetScreen(YwState *s, xcb_connection_t *c)
+{
+	xcb_screen_iterator_t iter = s->x.setup_roots_iterator(s->x.get_setup(c));
+	for (; iter.rem; --s->screen_num, s->x.screen_next(&iter)) {
+		if (s->screen_num == 0)
+			return iter.data;
+	}
+	return NULL;
 }
 static bool _YwInitWindowX11(YwState *s, YwWindowData *w, const char *name)
 {
@@ -151,29 +195,82 @@ static bool _YwInitWindowX11(YwState *s, YwWindowData *w, const char *name)
 		if (!_YwX11Load(s))
 			return false;
 
-	w->dpy = s->x.OpenDisplay(NULL);
-	if (!w->dpy)
+	w->conn = s->x.connect(NULL, &s->screen_num);
+	if (!w->conn || s->x.connection_has_error(w->conn))
 		return false;
-	s->xscreen = s->x.DefaultScreen(w->dpy);
-	w->win = s->x.CreateSimpleWindow(w->dpy, s->x.RootWindow(w->dpy, s->xscreen),
-					 0, 0, (unsigned int)w->width, (unsigned int)w->height, 1,
-					 s->x.BlackPixel(w->dpy, s->xscreen), s->x.BlackPixel(w->dpy, s->xscreen));
 
-	s->x.StoreName(w->dpy, w->win, name);
-	// XSelectInput(w->dpy, w->win, ExposureMask | KeyPressMask);
-	s->x.MapWindow(w->dpy, w->win);
-	//
-	// GC gc = XCreateGC(w->dpy, win, 0, NULL);
-	// XSetForeground(w->dpy, gc, BlackPixel(w->dpy, s->xscreen));
-	//
-	// XEvent ev;
-	// while (XNextEvent(w->dpy, &ev), 1) {
-	// 	if (ev.type == Expose)
-	// 		XDrawString(w->dpy, win, gc, 150, 100, "Hello, X11!", 11);
-	// 	if (ev.type == KeyPress)
-	// 		break;
-	// }
+	w->screen = _YwGetScreen(s, w->conn);
+	if (!w->screen)
+		return false;
+
+	w->win = s->x.generate_id(w->conn);
+	uint32_t mask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
+	uint32_t values[2] = {
+		w->screen->black_pixel,
+		XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_KEY_PRESS
+	};
+
+	s->x.create_window(
+		w->conn,
+		XCB_COPY_FROM_PARENT,
+		w->win,
+		w->screen->root,
+		0, 0,
+		(uint16_t)w->width,
+		(uint16_t)w->height,
+		1,
+		XCB_WINDOW_CLASS_INPUT_OUTPUT,
+		w->screen->root_visual,
+		mask,
+		values);
+
+	xcb_intern_atom_cookie_t proto_cookie = s->x.intern_atom(w->conn, 0, 12, "WM_PROTOCOLS");
+	xcb_intern_atom_cookie_t del_cookie = s->x.intern_atom(w->conn, 0, 16, "WM_DELETE_WINDOW");
+	xcb_intern_atom_reply_t *proto_reply = s->x.intern_atom_reply(w->conn, proto_cookie, NULL);
+	xcb_intern_atom_reply_t *del_reply = s->x.intern_atom_reply(w->conn, del_cookie, NULL);
+
+	if (proto_reply) {
+		s->wm_protocols = proto_reply->atom;
+		free(proto_reply);
+	}
+	if (del_reply) {
+		s->wm_delete_window = del_reply->atom;
+		free(del_reply);
+	}
+
+	if (s->wm_protocols && s->wm_delete_window) {
+		s->x.change_property(w->conn, XCB_PROP_MODE_REPLACE, w->win,
+				     s->wm_protocols, XCB_ATOM_ATOM, 32, 1, &s->wm_delete_window);
+	}
+
+	s->x.change_property(w->conn, XCB_PROP_MODE_REPLACE, w->win,
+			     XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8, strlen(name), name);
+
+	s->x.map_window(w->conn, w->win);
+	s->x.flush(w->conn);
+
 	return true;
+}
+
+static void _YwPollEventsX11(YwState *s, YwWindowData *w)
+{
+	xcb_generic_event_t *ev;
+	while ((ev = s->x.poll_for_event(w->conn))) {
+		switch (ev->response_type & ~0x80) {
+		case XCB_EXPOSE:
+			break;
+		case XCB_CLIENT_MESSAGE: {
+			xcb_client_message_event_t *cm = (xcb_client_message_event_t *)ev;
+			if (cm->data.data32[0] == s->wm_delete_window) {
+				/* window closed */
+			}
+			break;
+		}
+		case XCB_KEY_PRESS:
+			break;
+		}
+		free(ev);
+	}
 }
 #endif // YAWL_X11
 #if defined(YAWL_WIN32)
@@ -232,6 +329,17 @@ bool YwInit(YwState *s)
 	return true;
 }
 
+void YwPollEvents(YwState *s, YwWindowData *w)
+{
+#ifdef YAWL_X11
+	return _YwPollEventsX11(s, w);
+#elif defined(YAWL_WIN32)
+#else
+	fprintf(stderr, "Ywwl: Unsupported platform\n");
+	return false;
+#endif
+}
+
 bool YwInitWindow(YwState *s, YwWindowData *w, const char *name)
 {
 	if (!s->initialized) {
@@ -256,7 +364,7 @@ void YwBeginDrawing(YwState *s, YwWindowData *w)
 void YwEndDrawing(YwState *s, YwWindowData *w)
 {
 #ifdef YAWL_X11
-	s->x.Flush(w->dpy);
+	s->x.flush(w->conn);
 #endif // YAWL_X11
 #ifdef YAWL_WIN32
 	SwapBuffers(w->hdc);
