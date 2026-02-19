@@ -323,7 +323,7 @@ static bool _YwInitWindowWin32(YwState *s, YwWindowData *w, const char *name)
 }
 #endif //YAWL_WIN32
 
-bool YwInit(YwState *s)
+static bool _YwInit(YwState *s)
 {
 	s->initialized = true;
 	return true;
@@ -332,11 +332,10 @@ bool YwInit(YwState *s)
 void YwPollEvents(YwState *s, YwWindowData *w)
 {
 #ifdef YAWL_X11
-	return _YwPollEventsX11(s, w);
+	_YwPollEventsX11(s, w);
 #elif defined(YAWL_WIN32)
 #else
 	fprintf(stderr, "Ywwl: Unsupported platform\n");
-	return false;
 #endif
 }
 
@@ -354,7 +353,6 @@ bool YwInitWindow(YwState *s, YwWindowData *w, const char *name)
 	fprintf(stderr, "Ywwl: Unsupported platform\n");
 	return false;
 #endif
-	return true;
 }
 #endif // YAWL_IMPLEMENTATION
 
