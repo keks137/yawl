@@ -18,11 +18,25 @@
 
 #ifdef YAWL_WIN32
 
+struct _YwWGLFuncs {
+	bool loaded;
+	PROC(WINAPI *get_proc_address)(LPCSTR);
+	HGLRC(WINAPI *create_context)(HDC);
+	BOOL(WINAPI *delete_context)(HGLRC);
+	BOOL(WINAPI *make_current)(HDC, HGLRC);
+	BOOL(WINAPI *share_lists)(HGLRC, HGLRC);
+};
+
 #endif // YAWL_WIN32
 
 #ifdef YAWL_X11
+#define YAWL_EGL_EXTENDED
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
+#include <EGL/egl.h>
+#ifdef YAWL_EGL_EXTENDED
+#include <EGL/eglext.h>
+#endif // YAWL_EGL_EXTENDED
 struct _X11Display;
 typedef struct _X11Display X11Display;
 typedef unsigned long X11ID;
@@ -75,6 +89,26 @@ struct _YwX11Funcs {
 	int (*connection_has_error)(xcb_connection_t *c);
 };
 
+struct _YwEGLFuncs {
+	bool loaded;
+	EGLDisplay display;
+
+	void *(EGLAPIENTRY *get_proc_address)(const char *);
+	EGLDisplay (*get_display)(EGLNativeDisplayType);
+	EGLBoolean (*initialize)(EGLDisplay, EGLint *, EGLint *);
+	EGLBoolean (*terminate)(EGLDisplay);
+	EGLContext (*create_context)(EGLDisplay, EGLConfig, EGLContext, const EGLint *);
+	EGLBoolean (*make_current)(EGLDisplay, EGLSurface, EGLSurface, EGLContext);
+	EGLBoolean (*swap_buffers)(EGLDisplay, EGLSurface);
+	EGLSurface (*create_window_surface)(EGLDisplay, EGLConfig, EGLNativeWindowType, const EGLint *);
+	EGLBoolean (*bind_api)(EGLenum);
+	EGLBoolean (*choose_config)(EGLDisplay, const EGLint *, EGLConfig *, EGLint, EGLint *);
+	EGLint (*get_error)(void);
+#ifdef YAWL_EGL_EXTENDED
+	PFNEGLGETPLATFORMDISPLAYEXTPROC get_platform_display;
+#endif // YAWL_EGL_EXTENDED
+};
+
 #endif //YAWL_X11
 
 typedef struct {
@@ -85,6 +119,8 @@ typedef struct {
 	xcb_connection_t *conn;
 	xcb_window_t win;
 	xcb_screen_t *screen;
+	EGLSurface egl_surface;
+	EGLContext egl_context;
 #endif // YAWL_X11
 #ifdef YAWL_WIN32
 	HWND hwnd;
@@ -95,16 +131,18 @@ typedef struct {
 typedef struct {
 	bool initialized;
 #ifdef YAWL_X11
+	void *lgl;
 	int screen_num;
 	xcb_atom_t wm_protocols;
 	xcb_atom_t wm_delete_window;
 	struct _YwX11Funcs x;
+	struct _YwEGLFuncs e;
 #endif // YAWL_X11
 #ifdef YAWL_WIN32
 	HINSTANCE hinstance;
-	HMODULE gdi32;
-	HMODULE user32;
-	HMODULE kernel32;
+	HMODULE opengl32;
+	HGLRC gl_context;
+	struct _YwWGLFuncs wgl;
 #endif
 } YwState;
 
@@ -123,6 +161,7 @@ typedef struct {
 bool YwInitWindow(YwState *s, YwWindowData *w, const char *name);
 void YwBeginDrawing(YwState *s, YwWindowData *w);
 void YwEndDrawing(YwState *s, YwWindowData *w);
+bool YwLoadGLProc(YwState *s, void **proc, const char *name);
 
 #ifdef YAWL_IMPLEMENTATION
 
@@ -178,6 +217,61 @@ static bool _YwEGLLoad(YwState *s)
 		return false;
 	}
 
+	YW_LOAD_SYMBOL(s->e.get_proc_address, egl, "eglGetProcAddress");
+	YW_LOAD_SYMBOL(s->e.get_display, egl, "eglGetDisplay");
+	YW_LOAD_SYMBOL(s->e.initialize, egl, "eglInitialize");
+	YW_LOAD_SYMBOL(s->e.terminate, egl, "eglTerminate");
+	YW_LOAD_SYMBOL(s->e.create_context, egl, "eglCreateContext");
+	YW_LOAD_SYMBOL(s->e.make_current, egl, "eglMakeCurrent");
+	YW_LOAD_SYMBOL(s->e.swap_buffers, egl, "eglSwapBuffers");
+	YW_LOAD_SYMBOL(s->e.create_window_surface, egl, "eglCreateWindowSurface");
+	YW_LOAD_SYMBOL(s->e.bind_api, egl, "eglBindAPI");
+	YW_LOAD_SYMBOL(s->e.choose_config, egl, "eglChooseConfig");
+	YW_LOAD_SYMBOL(s->e.get_error, egl, "eglGetError");
+	// #ifdef YAWL_EGL_EXTENDED
+	YW_LOAD_SYMBOL(s->e.get_platform_display, egl, "eglGetPlatformDisplay");
+	// #endif // YAWL_EGL_EXTENDED
+	s->e.loaded = true;
+
+	return true;
+}
+static bool _YwEGLCreateContext(YwState *s, YwWindowData *w)
+{
+#ifdef YAWL_X11
+	s->e.display = s->e.get_platform_display(EGL_PLATFORM_XCB_EXT, w->conn, NULL);
+#else
+	s->e.display = s->e.get_display(w->conn);
+#endif // YAWL_X11
+
+	if (s->e.display == EGL_NO_DISPLAY)
+		return false;
+
+	EGLint major, minor;
+	if (!s->e.initialize(s->e.display, &major, &minor))
+		return false;
+
+	s->e.bind_api(EGL_OPENGL_API);
+
+	EGLint attribs[] = {
+		EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+		EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+		EGL_NONE
+	};
+
+	EGLConfig config;
+	EGLint num_configs;
+	s->e.choose_config(s->e.display, attribs, &config, 1, &num_configs);
+
+	w->egl_surface = s->e.create_window_surface(s->e.display, config, w->win, NULL);
+	if (w->egl_surface == EGL_NO_SURFACE)
+		return false;
+
+	EGLint ctx_attribs[] = { EGL_NONE };
+	w->egl_context = s->e.create_context(s->e.display, config, EGL_NO_CONTEXT, ctx_attribs);
+	if (w->egl_context == EGL_NO_CONTEXT)
+		return false;
+
+	s->e.make_current(s->e.display, w->egl_surface, w->egl_surface, w->egl_context);
 	return true;
 }
 
@@ -252,7 +346,15 @@ static bool _YwInitWindowX11(YwState *s, YwWindowData *w, const char *name)
 			     XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8, strlen(name), name);
 
 	s->x.map_window(w->conn, w->win);
-	s->x.flush(w->conn);
+
+	if (!s->e.loaded)
+		if (!_YwEGLLoad(s))
+			return false;
+
+	if (!_YwEGLCreateContext(s, w))
+		return false;
+
+	s->e.swap_buffers(s->e.display, w->egl_surface);
 
 	return true;
 }
@@ -283,6 +385,13 @@ static void _YwPollEventsX11(YwState *s, YwWindowData *w)
 		free(ev);
 	}
 }
+static bool _YwLoadGLProcX11(YwState *s, void **proc, const char *name)
+{
+	void *p = NULL;
+	p = s->e.get_proc_address(name);
+	*proc = p;
+	return p != NULL;
+}
 #endif // YAWL_X11
 #if defined(YAWL_WIN32)
 #define YW_LOAD_SYMBOL(sym, lib, name)                                   \
@@ -294,6 +403,24 @@ static void _YwPollEventsX11(YwState *s, YwWindowData *w)
 		}                                                        \
 		sym = (void *)tmp;                                       \
 	} while (0)
+
+static bool _YwWGLLoad(YwState *s)
+{
+	if (!s->opengl32) {
+		s->opengl32 = LoadLibraryA("opengl32.dll");
+		if (!s->opengl32)
+			return false;
+	}
+
+	YW_LOAD_SYMBOL(s->wgl.get_proc_address, s->opengl32, "wglGetProcAddress");
+	YW_LOAD_SYMBOL(s->wgl.create_context, s->opengl32, "wglCreateContext");
+	YW_LOAD_SYMBOL(s->wgl.delete_context, s->opengl32, "wglDeleteContext");
+	YW_LOAD_SYMBOL(s->wgl.make_current, s->opengl32, "wglMakeCurrent");
+	YW_LOAD_SYMBOL(s->wgl.share_lists, s->opengl32, "wglShareLists");
+
+	s->wgl.loaded = true;
+	return true;
+}
 
 static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
@@ -343,6 +470,23 @@ static bool _YwInitWindowWin32(YwState *s, YwWindowData *w, const char *name)
 	ShowWindow(w->hwnd, SW_SHOW);
 	UpdateWindow(w->hwnd);
 	w->hdc = GetDC(w->hwnd);
+	if (!_YwWGLLoad(s))
+		return false;
+	PIXELFORMATDESCRIPTOR pfd = { 0 };
+	pfd.nSize = sizeof(pfd);
+	pfd.nVersion = 1;
+	pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+	pfd.iPixelType = PFD_TYPE_RGBA;
+	pfd.cColorBits = 32;
+	pfd.cDepthBits = 24;
+	pfd.cStencilBits = 8;
+	pfd.iLayerType = PFD_MAIN_PLANE;
+
+	int pf = ChoosePixelFormat(w->hdc, &pfd);
+SetPixelFormat(w->hdc, pf, &pfd);
+
+	s->gl_context = s->wgl.create_context(w->hdc);
+	s->wgl.make_current(w->hdc, s->gl_context);
 	return true;
 }
 static void _YwPollEventsWin32(YwState *s, YwWindowData *w)
@@ -355,6 +499,15 @@ static void _YwPollEventsWin32(YwState *s, YwWindowData *w)
 		TranslateMessage(&msg);
 		DispatchMessageA(&msg);
 	}
+}
+
+static bool _YwLoadGLProcWin32(YwState *s, void **proc, const char *name)
+{
+	void *p = (void *)s->wgl.get_proc_address(name);
+	if (!p)
+		p = (void *)GetProcAddress(s->opengl32, name);
+	*proc = p;
+	return p != NULL;
 }
 #endif //YAWL_WIN32
 
@@ -398,11 +551,22 @@ void YwBeginDrawing(YwState *s, YwWindowData *w)
 void YwEndDrawing(YwState *s, YwWindowData *w)
 {
 #ifdef YAWL_X11
-	s->x.flush(w->conn);
+	// s->x.flush(w->conn);
+	s->e.swap_buffers(s->e.display, w->egl_surface);
 #endif // YAWL_X11
 #ifdef YAWL_WIN32
 	SwapBuffers(w->hdc);
 #endif // YAWL_WIN32
+}
+
+bool YwLoadGLProc(YwState *s, void **proc, const char *name)
+{
+#ifdef YAWL_WIN32
+	return _YwLoadGLProcWin32(s, proc, name);
+#endif // YAWL_WIN32
+#ifdef YAWL_X11
+	return _YwLoadGLProcX11(s, proc, name);
+#endif // YAWL_X11
 }
 
 #endif // INCLUDE_YAWL_YAWL_H_
