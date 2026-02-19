@@ -483,7 +483,7 @@ static bool _YwInitWindowWin32(YwState *s, YwWindowData *w, const char *name)
 	pfd.iLayerType = PFD_MAIN_PLANE;
 
 	int pf = ChoosePixelFormat(w->hdc, &pfd);
-SetPixelFormat(w->hdc, pf, &pfd);
+	SetPixelFormat(w->hdc, pf, &pfd);
 
 	s->gl_context = s->wgl.create_context(w->hdc);
 	s->wgl.make_current(w->hdc, s->gl_context);
@@ -543,8 +543,6 @@ bool YwInitWindow(YwState *s, YwWindowData *w, const char *name)
 	return false;
 #endif
 }
-#endif // YAWL_IMPLEMENTATION
-
 void YwBeginDrawing(YwState *s, YwWindowData *w)
 {
 }
@@ -568,5 +566,7 @@ bool YwLoadGLProc(YwState *s, void **proc, const char *name)
 	return _YwLoadGLProcX11(s, proc, name);
 #endif // YAWL_X11
 }
+
+#endif // YAWL_IMPLEMENTATION
 
 #endif // INCLUDE_YAWL_YAWL_H_
