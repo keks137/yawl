@@ -418,6 +418,20 @@ static bool _YwLoadGLProcX11(YwState *s, void **proc, const char *name)
 		sym = (void *)tmp;                                       \
 	} while (0)
 
+static bool _YwWGLLoadExtensions(YwState *s)
+{
+	if (!s->wgl.loaded)
+		return false;
+
+	void *p = (void *)s->wgl.get_proc_address("wglSwapIntervalEXT");
+	if (!p) {
+		fprintf(stderr, "wglSwapIntervalEXT not available\n");
+		return false;
+	}
+	s->wgl.swap_interval = (BOOL(WINAPI *)(int))p;
+
+	return true;
+}
 static bool _YwWGLLoad(YwState *s)
 {
 	if (!s->opengl32) {
@@ -431,7 +445,6 @@ static bool _YwWGLLoad(YwState *s)
 	YW_LOAD_SYMBOL(s->wgl.delete_context, s->opengl32, "wglDeleteContext");
 	YW_LOAD_SYMBOL(s->wgl.make_current, s->opengl32, "wglMakeCurrent");
 	YW_LOAD_SYMBOL(s->wgl.share_lists, s->opengl32, "wglShareLists");
-	YW_LOAD_SYMBOL(s->wgl.swap_interval, s->opengl32, "wglSwapIntervalEXT");
 
 	s->wgl.loaded = true;
 	return true;
@@ -502,6 +515,10 @@ static bool _YwInitWindowWin32(YwState *s, YwWindowData *w, const char *name)
 
 	s->gl_context = s->wgl.create_context(w->hdc);
 	s->wgl.make_current(w->hdc, s->gl_context);
+
+	if (!_YwWGLLoadExtensions(s))
+		return false;
+
 	s->wgl.swap_interval(0);
 	return true;
 }
