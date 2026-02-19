@@ -342,7 +342,7 @@ void YwPollEvents(YwState *s, YwWindowData *w)
 bool YwInitWindow(YwState *s, YwWindowData *w, const char *name)
 {
 	if (!s->initialized) {
-		if (!YwInit(s))
+		if (!_YwInit(s))
 			return false;
 	}
 #ifdef YAWL_X11
