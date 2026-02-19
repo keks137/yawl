@@ -80,6 +80,7 @@ struct _YwX11Funcs {
 typedef struct {
 	size_t width;
 	size_t height;
+	bool should_close;
 #ifdef YAWL_X11
 	xcb_connection_t *conn;
 	xcb_window_t win;
@@ -202,12 +203,16 @@ static bool _YwInitWindowX11(YwState *s, YwWindowData *w, const char *name)
 	w->screen = _YwGetScreen(s, w->conn);
 	if (!w->screen)
 		return false;
+	if (w->width == 0 || w->height == 0) {
+		w->width = w->screen->width_in_pixels;
+		w->height = w->screen->height_in_pixels;
+	}
 
 	w->win = s->x.generate_id(w->conn);
 	uint32_t mask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
 	uint32_t values[2] = {
 		w->screen->black_pixel,
-		XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_KEY_PRESS
+		XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_STRUCTURE_NOTIFY
 	};
 
 	s->x.create_window(
@@ -262,8 +267,14 @@ static void _YwPollEventsX11(YwState *s, YwWindowData *w)
 		case XCB_CLIENT_MESSAGE: {
 			xcb_client_message_event_t *cm = (xcb_client_message_event_t *)ev;
 			if (cm->data.data32[0] == s->wm_delete_window) {
-				/* window closed */
+				w->should_close = true;
 			}
+			break;
+		}
+		case XCB_CONFIGURE_NOTIFY: {
+			xcb_configure_notify_event_t *cn = (xcb_configure_notify_event_t *)ev;
+			w->width = cn->width;
+			w->height = cn->height;
 			break;
 		}
 		case XCB_KEY_PRESS:
@@ -286,15 +297,28 @@ static void _YwPollEventsX11(YwState *s, YwWindowData *w)
 
 static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
-	(void)wparam;
-	(void)lparam;
-	if (msg == WM_DESTROY) {
+	YwWindowData *w = (YwWindowData *)GetWindowLongPtrA(hwnd, GWLP_USERDATA);
+
+	switch (msg) {
+	case WM_CREATE: {
+		CREATESTRUCTA *cs = (CREATESTRUCTA *)lparam;
+		SetWindowLongPtrA(hwnd, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams);
+		return 0;
+	}
+	case WM_DESTROY:
+		if (w)
+			w->should_close = true;
 		PostQuitMessage(0);
+		return 0;
+	case WM_SIZE:
+		if (w) {
+			w->width = LOWORD(lparam);
+			w->height = HIWORD(lparam);
+		}
 		return 0;
 	}
 	return DefWindowProcA(hwnd, msg, wparam, lparam);
 }
-
 static bool _YwInitWindowWin32(YwState *s, YwWindowData *w, const char *name)
 {
 	s->hinstance = GetModuleHandleA(NULL);
@@ -311,7 +335,7 @@ static bool _YwInitWindowWin32(YwState *s, YwWindowData *w, const char *name)
 		WS_OVERLAPPEDWINDOW,
 		CW_USEDEFAULT, CW_USEDEFAULT,
 		(int)w->width, (int)w->height,
-		NULL, NULL, s->hinstance, NULL);
+		NULL, NULL, s->hinstance, w);
 
 	if (!w->hwnd)
 		return false;
@@ -320,6 +344,17 @@ static bool _YwInitWindowWin32(YwState *s, YwWindowData *w, const char *name)
 	UpdateWindow(w->hwnd);
 	w->hdc = GetDC(w->hwnd);
 	return true;
+}
+static void _YwPollEventsWin32(YwState *s, YwWindowData *w)
+{
+	MSG msg;
+	while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+		if (msg.message == WM_QUIT) {
+			w->should_close = true;
+		}
+		TranslateMessage(&msg);
+		DispatchMessageA(&msg);
+	}
 }
 #endif //YAWL_WIN32
 
@@ -334,6 +369,7 @@ void YwPollEvents(YwState *s, YwWindowData *w)
 #ifdef YAWL_X11
 	_YwPollEventsX11(s, w);
 #elif defined(YAWL_WIN32)
+	_YwPollEventsWin32(s, w);
 #else
 	fprintf(stderr, "Ywwl: Unsupported platform\n");
 #endif

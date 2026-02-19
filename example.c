@@ -4,10 +4,11 @@ int main()
 {
 	YwState s = { 0 };
 	YwWindowData w = { 0 };
-	w.width = 800;
-	w.height = 600;
+	// w.width = 800;  // if you want to specify initial size
+	// w.height = 600;
 	YwInitWindow(&s, &w, "Hi!");
-	while (true) {
+	while (!w.should_close) {
+		YwPollEvents(&s, &w);
 		YwBeginDrawing(&s, &w);
 		YwEndDrawing(&s, &w);
 	}
