@@ -25,6 +25,7 @@ struct _YwWGLFuncs {
 	BOOL(WINAPI *delete_context)(HGLRC);
 	BOOL(WINAPI *make_current)(HDC, HGLRC);
 	BOOL(WINAPI *share_lists)(HGLRC, HGLRC);
+	BOOL(WINAPI *swap_interval)(int);
 };
 
 #endif // YAWL_WIN32
@@ -104,6 +105,7 @@ struct _YwEGLFuncs {
 	EGLBoolean (*bind_api)(EGLenum);
 	EGLBoolean (*choose_config)(EGLDisplay, const EGLint *, EGLConfig *, EGLint, EGLint *);
 	EGLint (*get_error)(void);
+	EGLBoolean (*swap_interval)(EGLDisplay, EGLint);
 #ifdef YAWL_EGL_EXTENDED
 	PFNEGLGETPLATFORMDISPLAYEXTPROC get_platform_display;
 #endif // YAWL_EGL_EXTENDED
@@ -162,6 +164,7 @@ bool YwInitWindow(YwState *s, YwWindowData *w, const char *name);
 void YwBeginDrawing(YwState *s, YwWindowData *w);
 void YwEndDrawing(YwState *s, YwWindowData *w);
 bool YwLoadGLProc(YwState *s, void **proc, const char *name);
+void YwSetVSync(YwState *s, bool enabled);
 
 #ifdef YAWL_IMPLEMENTATION
 
@@ -228,6 +231,7 @@ static bool _YwEGLLoad(YwState *s)
 	YW_LOAD_SYMBOL(s->e.bind_api, egl, "eglBindAPI");
 	YW_LOAD_SYMBOL(s->e.choose_config, egl, "eglChooseConfig");
 	YW_LOAD_SYMBOL(s->e.get_error, egl, "eglGetError");
+	YW_LOAD_SYMBOL(s->e.swap_interval, egl, "eglSwapInterval");
 	// #ifdef YAWL_EGL_EXTENDED
 	YW_LOAD_SYMBOL(s->e.get_platform_display, egl, "eglGetPlatformDisplay");
 	// #endif // YAWL_EGL_EXTENDED
@@ -255,16 +259,25 @@ static bool _YwEGLCreateContext(YwState *s, YwWindowData *w)
 	EGLint attribs[] = {
 		EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
 		EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+		EGL_RED_SIZE, 8,
+		EGL_GREEN_SIZE, 8,
+		EGL_BLUE_SIZE, 8,
 		EGL_NONE
 	};
 
 	EGLConfig config;
 	EGLint num_configs;
-	s->e.choose_config(s->e.display, attribs, &config, 1, &num_configs);
+	if (!s->e.choose_config(s->e.display, attribs, &config, 1, &num_configs) || num_configs < 1) {
+		fprintf(stderr, "No EGL config found\n");
+		return false;
+	}
 
 	w->egl_surface = s->e.create_window_surface(s->e.display, config, w->win, NULL);
-	if (w->egl_surface == EGL_NO_SURFACE)
+	if (w->egl_surface == EGL_NO_SURFACE) {
+		EGLint err = s->e.get_error();
+		fprintf(stderr, "eglCreateWindowSurface failed: 0x%x (%d)\n", err, err);
 		return false;
+	}
 
 	EGLint ctx_attribs[] = { EGL_NONE };
 	w->egl_context = s->e.create_context(s->e.display, config, EGL_NO_CONTEXT, ctx_attribs);
@@ -272,6 +285,7 @@ static bool _YwEGLCreateContext(YwState *s, YwWindowData *w)
 		return false;
 
 	s->e.make_current(s->e.display, w->egl_surface, w->egl_surface, w->egl_context);
+	s->e.swap_interval(s->e.display, 0); // disable VSYNC
 	return true;
 }
 
@@ -417,6 +431,7 @@ static bool _YwWGLLoad(YwState *s)
 	YW_LOAD_SYMBOL(s->wgl.delete_context, s->opengl32, "wglDeleteContext");
 	YW_LOAD_SYMBOL(s->wgl.make_current, s->opengl32, "wglMakeCurrent");
 	YW_LOAD_SYMBOL(s->wgl.share_lists, s->opengl32, "wglShareLists");
+	YW_LOAD_SYMBOL(s->wgl.swap_interval, s->opengl32, "wglSwapIntervalEXT");
 
 	s->wgl.loaded = true;
 	return true;
@@ -487,6 +502,7 @@ static bool _YwInitWindowWin32(YwState *s, YwWindowData *w, const char *name)
 
 	s->gl_context = s->wgl.create_context(w->hdc);
 	s->wgl.make_current(w->hdc, s->gl_context);
+	s->wgl.swap_interval(0);
 	return true;
 }
 static void _YwPollEventsWin32(YwState *s, YwWindowData *w)
@@ -565,6 +581,19 @@ bool YwLoadGLProc(YwState *s, void **proc, const char *name)
 #ifdef YAWL_X11
 	return _YwLoadGLProcX11(s, proc, name);
 #endif // YAWL_X11
+}
+
+void YwSetVSync(YwState *s, bool enabled)
+{
+	int interval = enabled ? 1 : 0;
+#ifdef YAWL_X11
+	if (s->e.loaded)
+		s->e.swap_interval(s->e.display, interval);
+#endif
+#ifdef YAWL_WIN32
+	if (s->wgl.loaded)
+		s->wgl.swap_interval(interval);
+#endif
 }
 
 #endif // YAWL_IMPLEMENTATION
