@@ -8,8 +8,8 @@ int main()
 	w.height = 600;
 	YwInitWindow(&s, &w, "Hi!");
 	while (!w.should_close) {
-		YwPollEvents(&s, &w);
-		YwBeginDrawing(&s, &w);
-		YwEndDrawing(&s, &w);
+		YwPollEvents(&w);
+		YwBeginDrawing(&w);
+		YwEndDrawing(&w);
 	}
 }

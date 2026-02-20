@@ -10,10 +10,22 @@
 #if defined(_WIN32)
 #define YAWL_WIN32
 #include <windows.h>
+#elif defined(__ANDROID__)
+#define YAWL_ANDROID
+#define YAWL_EGL
+#include <android/native_window.h>
+#include <android/native_activity.h>
+#include <android/native_window_jni.h>
+#include <android/looper.h>
+#include <android/input.h>
+#include <android/keycodes.h>
+#include <fcntl.h>
+#include <unistd.h>
 #elif defined(__linux__)
-#include <dlfcn.h>
+#define YAWL_EGL
 #ifndef YAWL_WAYLAND
 #define YAWL_X11
+#define YAWL_EGL_EXTENDED
 #endif // YAWL_WAYLAND
 #endif // _WIN32
 
@@ -95,14 +107,14 @@ typedef enum {
 	YW_KEY_RALT,
 	YW_KEY_LSUPER,
 	YW_KEY_RSUPER, // super = win/cmd
-	YW_KEY_COUNT
+	YW_KEY_FRAME_END, // control character for macros
+	YW_KEY_COUNT,
 } YwKey;
 typedef struct {
 	YwKey key;
 	bool pressed;
 	bool repeat;
 	uint8_t mods; // bitmask: 1=shift, 2=ctrl, 4=alt, 8=super
-	// uint32_t timestamp; // seconds since some arbitrary epoch
 } YwKeyEvent;
 
 #ifndef YW_KEYBUF_SIZE
@@ -114,14 +126,38 @@ struct YwKeyBuffer {
 	uint8_t write;
 	uint8_t read;
 };
-#ifdef YAWL_X11
-#define YAWL_EGL_EXTENDED
-#include <xcb/xcb.h>
-#include <xcb/xproto.h>
+
+#ifdef YAWL_EGL
 #include <EGL/egl.h>
 #ifdef YAWL_EGL_EXTENDED
 #include <EGL/eglext.h>
 #endif // YAWL_EGL_EXTENDED
+
+struct _YwEGLFuncs {
+	bool loaded;
+
+	void *(EGLAPIENTRY *get_proc_address)(const char *);
+	EGLDisplay (*get_display)(EGLNativeDisplayType);
+	EGLBoolean (*initialize)(EGLDisplay, EGLint *, EGLint *);
+	EGLBoolean (*terminate)(EGLDisplay);
+	EGLContext (*create_context)(EGLDisplay, EGLConfig, EGLContext, const EGLint *);
+	EGLBoolean (*make_current)(EGLDisplay, EGLSurface, EGLSurface, EGLContext);
+	EGLBoolean (*swap_buffers)(EGLDisplay, EGLSurface);
+	EGLSurface (*create_window_surface)(EGLDisplay, EGLConfig, EGLNativeWindowType, const EGLint *);
+	EGLBoolean (*bind_api)(EGLenum);
+	EGLBoolean (*choose_config)(EGLDisplay, const EGLint *, EGLConfig *, EGLint, EGLint *);
+	EGLint (*get_error)(void);
+	EGLBoolean (*swap_interval)(EGLDisplay, EGLint);
+#ifdef YAWL_EGL_EXTENDED
+	PFNEGLGETPLATFORMDISPLAYEXTPROC get_platform_display;
+#endif // YAWL_EGL_EXTENDED
+};
+
+#endif // YAWL_EGL
+
+#ifdef YAWL_X11
+#include <xcb/xcb.h>
+#include <xcb/xproto.h>
 struct _X11Display;
 typedef struct _X11Display X11Display;
 typedef unsigned long X11ID;
@@ -174,35 +210,34 @@ struct _YwX11Funcs {
 	int (*connection_has_error)(xcb_connection_t *c);
 };
 
-struct _YwEGLFuncs {
-	bool loaded;
-
-	void *(EGLAPIENTRY *get_proc_address)(const char *);
-	EGLDisplay (*get_display)(EGLNativeDisplayType);
-	EGLBoolean (*initialize)(EGLDisplay, EGLint *, EGLint *);
-	EGLBoolean (*terminate)(EGLDisplay);
-	EGLContext (*create_context)(EGLDisplay, EGLConfig, EGLContext, const EGLint *);
-	EGLBoolean (*make_current)(EGLDisplay, EGLSurface, EGLSurface, EGLContext);
-	EGLBoolean (*swap_buffers)(EGLDisplay, EGLSurface);
-	EGLSurface (*create_window_surface)(EGLDisplay, EGLConfig, EGLNativeWindowType, const EGLint *);
-	EGLBoolean (*bind_api)(EGLenum);
-	EGLBoolean (*choose_config)(EGLDisplay, const EGLint *, EGLConfig *, EGLint, EGLint *);
-	EGLint (*get_error)(void);
-	EGLBoolean (*swap_interval)(EGLDisplay, EGLint);
-#ifdef YAWL_EGL_EXTENDED
-	PFNEGLGETPLATFORMDISPLAYEXTPROC get_platform_display;
-#endif // YAWL_EGL_EXTENDED
-};
-
 #endif //YAWL_X11
 
-// NOTE: each key is 2 bit
+typedef struct {
+	bool initialized;
+#ifdef YAWL_X11
+	void *lgl;
+	int screen_num;
+	xcb_atom_t wm_protocols;
+	xcb_atom_t wm_delete_window;
+	struct _YwX11Funcs x;
+#endif // YAWL_X11
+#ifdef YAWL_EGL
+	struct _YwEGLFuncs e;
+#endif //YAWL_EGL
+#ifdef YAWL_WIN32
+	HINSTANCE hinstance;
+	HMODULE opengl32;
+	struct _YwWGLFuncs wgl;
+#endif
+} YwState;
 
 typedef struct {
 	size_t width;
 	size_t height;
 	bool should_close;
 	struct YwKeyBuffer key_buf;
+	YwState *state;
+
 #ifdef YAWL_X11
 	xcb_connection_t *conn;
 	xcb_window_t win;
@@ -216,25 +251,21 @@ typedef struct {
 	HDC hdc;
 	HGLRC gl_context;
 #endif // YAWL_WIN32
+#ifdef YAWL_ANDROID
+	ANativeWindow *native_window;
+	EGLSurface egl_surface;
+	EGLContext egl_context;
+	EGLDisplay egl_display;
+	EGLConfig egl_config;
+	bool egl_context_bound;
+	ANativeActivity *activity;
+	AInputQueue *input_queue;
+	ALooper *looper;
+	int msgread;
+	int msgwrite;
+
+#endif // YAWL_ANDROID
 } YwWindowData;
-
-typedef struct {
-	bool initialized;
-#ifdef YAWL_X11
-	void *lgl;
-	int screen_num;
-	xcb_atom_t wm_protocols;
-	xcb_atom_t wm_delete_window;
-	struct _YwX11Funcs x;
-	struct _YwEGLFuncs e;
-#endif // YAWL_X11
-#ifdef YAWL_WIN32
-	HINSTANCE hinstance;
-	HMODULE opengl32;
-	struct _YwWGLFuncs wgl;
-#endif
-} YwState;
-
 #ifndef YwMemset
 #include <string.h>
 #define YwMemset(ptr, val, n_bytes) memset(ptr, val, n_bytes)
@@ -248,15 +279,30 @@ typedef struct {
 #endif
 
 YW_EXPORT bool YwInitWindow(YwState *s, YwWindowData *w, const char *name);
-YW_EXPORT void YwBeginDrawing(YwState *s, YwWindowData *w);
-YW_EXPORT void YwEndDrawing(YwState *s, YwWindowData *w);
+YW_EXPORT void YwBeginDrawing(YwWindowData *w);
+YW_EXPORT void YwEndDrawing(YwWindowData *w);
 YW_EXPORT bool YwGLLoadProc(YwState *s, void **proc, const char *name);
-YW_EXPORT void YwGLMakeCurrent(YwState *s, YwWindowData *w);
-YW_EXPORT void YwSetVSync(YwState *s, YwWindowData *w, bool enabled);
-YW_EXPORT bool YwNextKeyEvent(YwState *s, YwWindowData *w, YwKeyEvent *out);
-YW_EXPORT void YwPollEvents(YwState *s, YwWindowData *w);
+YW_EXPORT void YwGLMakeCurrent(YwWindowData *w);
+YW_EXPORT void YwSetVSync(YwWindowData *w, bool enabled);
+YW_EXPORT bool YwNextKeyEvent(YwWindowData *w, YwKeyEvent *out);
+YW_EXPORT void YwPollEvents(YwWindowData *w);
+#ifdef YAWL_ANDROID
+YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindowData *w, ANativeActivity *activity);
+#endif
 
 #ifdef YAWL_IMPLEMENTATION
+#ifdef __linux__
+#include <dlfcn.h>
+#define YW_LOAD_SYMBOL(sym, lib, name)                                 \
+	do {                                                           \
+		void *tmp_symbol = dlsym(lib, name);                   \
+		if (tmp_symbol == NULL) {                              \
+			fprintf(stderr, "symbol not found: %s", name); \
+			return false;                                  \
+		}                                                      \
+		sym = tmp_symbol;                                      \
+	} while (0)
+#endif //__linux__
 #define YW_KEYBUF_PUSH(buf, ev)                                     \
 	do {                                                        \
 		uint8_t _next = (buf)->write + 1;                   \
@@ -268,6 +314,421 @@ YW_EXPORT void YwPollEvents(YwState *s, YwWindowData *w);
 		(buf)->write = _next;                               \
 	} while (0)
 
+#ifdef YAWL_EGL
+static bool _YwEGLLoad(YwState *s)
+{
+	void *egl = dlopen("libEGL.so.1", RTLD_NOW | RTLD_LOCAL);
+	if (!egl)
+		egl = dlopen("libEGL.so", RTLD_NOW | RTLD_LOCAL);
+	if (!egl) {
+		fprintf(stderr, "no EGL: %s\n", dlerror());
+		return false;
+	}
+
+	YW_LOAD_SYMBOL(s->e.get_proc_address, egl, "eglGetProcAddress");
+	YW_LOAD_SYMBOL(s->e.get_display, egl, "eglGetDisplay");
+	YW_LOAD_SYMBOL(s->e.initialize, egl, "eglInitialize");
+	YW_LOAD_SYMBOL(s->e.terminate, egl, "eglTerminate");
+	YW_LOAD_SYMBOL(s->e.create_context, egl, "eglCreateContext");
+	YW_LOAD_SYMBOL(s->e.make_current, egl, "eglMakeCurrent");
+	YW_LOAD_SYMBOL(s->e.swap_buffers, egl, "eglSwapBuffers");
+	YW_LOAD_SYMBOL(s->e.create_window_surface, egl, "eglCreateWindowSurface");
+	YW_LOAD_SYMBOL(s->e.bind_api, egl, "eglBindAPI");
+	YW_LOAD_SYMBOL(s->e.choose_config, egl, "eglChooseConfig");
+	YW_LOAD_SYMBOL(s->e.get_error, egl, "eglGetError");
+	YW_LOAD_SYMBOL(s->e.swap_interval, egl, "eglSwapInterval");
+#ifdef YAWL_EGL_EXTENDED
+	YW_LOAD_SYMBOL(s->e.get_platform_display, egl, "eglGetPlatformDisplay");
+#endif // YAWL_EGL_EXTENDED
+	s->e.loaded = true;
+
+	return true;
+}
+static bool _YwEGLCreateContext(YwState *s, YwWindowData *w)
+{
+#ifdef YAWL_X11
+	w->egl_display = s->e.get_platform_display(EGL_PLATFORM_XCB_EXT, w->conn, NULL);
+#else
+	w->egl_display = s->e.get_display(w->conn);
+#endif // YAWL_X11
+
+	if (w->egl_display == EGL_NO_DISPLAY)
+		return false;
+
+	EGLint major, minor;
+	if (!s->e.initialize(w->egl_display, &major, &minor))
+		return false;
+
+	s->e.bind_api(EGL_OPENGL_API);
+
+	EGLint attribs[] = {
+		EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+		EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+		EGL_RED_SIZE, 8,
+		EGL_GREEN_SIZE, 8,
+		EGL_BLUE_SIZE, 8,
+		EGL_NONE
+	};
+
+	EGLConfig config;
+	EGLint num_configs;
+	if (!s->e.choose_config(w->egl_display, attribs, &config, 1, &num_configs) || num_configs < 1) {
+		fprintf(stderr, "No EGL config found\n");
+		return false;
+	}
+
+	w->egl_surface = s->e.create_window_surface(w->egl_display, config, w->win, NULL);
+	if (w->egl_surface == EGL_NO_SURFACE) {
+		EGLint err = s->e.get_error();
+		fprintf(stderr, "eglCreateWindowSurface failed: 0x%x (%d)\n", err, err);
+		return false;
+	}
+
+	EGLint ctx_attribs[] = { EGL_NONE };
+	w->egl_context = s->e.create_context(w->egl_display, config, EGL_NO_CONTEXT, ctx_attribs);
+	if (w->egl_context == EGL_NO_CONTEXT)
+		return false;
+
+	s->e.make_current(w->egl_display, w->egl_surface, w->egl_surface, w->egl_context);
+	s->e.swap_interval(w->egl_display, 0); // disable VSYNC
+	return true;
+}
+
+static bool _YwLoadGLProcEGL(YwState *s, void **proc, const char *name)
+{
+	void *p = NULL;
+	p = s->e.get_proc_address(name);
+	*proc = p;
+	return p != NULL;
+}
+
+#endif //YAWL_EGL
+
+#ifdef YAWL_ANDROID
+// Pipe commands: 1=window created, 2=window destroyed, 3=input available, 4=destroy
+enum { CMD_WINDOW_CREATED = 1,
+       CMD_WINDOW_DESTROYED,
+       CMD_INPUT_AVAILABLE,
+       CMD_DESTROY };
+
+static YwKey _YwAndroidKeycodeToKey(int32_t keycode)
+{
+	switch (keycode) {
+	case AKEYCODE_A:
+		return YW_KEY_A;
+	case AKEYCODE_B:
+		return YW_KEY_B;
+	case AKEYCODE_C:
+		return YW_KEY_C;
+	case AKEYCODE_D:
+		return YW_KEY_D;
+	case AKEYCODE_E:
+		return YW_KEY_E;
+	case AKEYCODE_F:
+		return YW_KEY_F;
+	case AKEYCODE_G:
+		return YW_KEY_G;
+	case AKEYCODE_H:
+		return YW_KEY_H;
+	case AKEYCODE_I:
+		return YW_KEY_I;
+	case AKEYCODE_J:
+		return YW_KEY_J;
+	case AKEYCODE_K:
+		return YW_KEY_K;
+	case AKEYCODE_L:
+		return YW_KEY_L;
+	case AKEYCODE_M:
+		return YW_KEY_M;
+	case AKEYCODE_N:
+		return YW_KEY_N;
+	case AKEYCODE_O:
+		return YW_KEY_O;
+	case AKEYCODE_P:
+		return YW_KEY_P;
+	case AKEYCODE_Q:
+		return YW_KEY_Q;
+	case AKEYCODE_R:
+		return YW_KEY_R;
+	case AKEYCODE_S:
+		return YW_KEY_S;
+	case AKEYCODE_T:
+		return YW_KEY_T;
+	case AKEYCODE_U:
+		return YW_KEY_U;
+	case AKEYCODE_V:
+		return YW_KEY_V;
+	case AKEYCODE_W:
+		return YW_KEY_W;
+	case AKEYCODE_X:
+		return YW_KEY_X;
+	case AKEYCODE_Y:
+		return YW_KEY_Y;
+	case AKEYCODE_Z:
+		return YW_KEY_Z;
+	case AKEYCODE_0:
+		return YW_KEY_0;
+	case AKEYCODE_1:
+		return YW_KEY_1;
+	case AKEYCODE_2:
+		return YW_KEY_2;
+	case AKEYCODE_3:
+		return YW_KEY_3;
+	case AKEYCODE_4:
+		return YW_KEY_4;
+	case AKEYCODE_5:
+		return YW_KEY_5;
+	case AKEYCODE_6:
+		return YW_KEY_6;
+	case AKEYCODE_7:
+		return YW_KEY_7;
+	case AKEYCODE_8:
+		return YW_KEY_8;
+	case AKEYCODE_9:
+		return YW_KEY_9;
+	case AKEYCODE_SPACE:
+		return YW_KEY_SPACE;
+	case AKEYCODE_ENTER:
+		return YW_KEY_ENTER;
+	case AKEYCODE_TAB:
+		return YW_KEY_TAB;
+	case AKEYCODE_ESCAPE:
+		return YW_KEY_ESCAPE;
+	case AKEYCODE_DEL:
+		return YW_KEY_BACKSPACE;
+	case AKEYCODE_DPAD_UP:
+		return YW_KEY_UP;
+	case AKEYCODE_DPAD_DOWN:
+		return YW_KEY_DOWN;
+	case AKEYCODE_DPAD_LEFT:
+		return YW_KEY_LEFT;
+	case AKEYCODE_DPAD_RIGHT:
+		return YW_KEY_RIGHT;
+	case AKEYCODE_SHIFT_LEFT:
+		return YW_KEY_LSHIFT;
+	case AKEYCODE_SHIFT_RIGHT:
+		return YW_KEY_RSHIFT;
+	case AKEYCODE_CTRL_LEFT:
+		return YW_KEY_LCTRL;
+	case AKEYCODE_CTRL_RIGHT:
+		return YW_KEY_RCTRL;
+	case AKEYCODE_ALT_LEFT:
+		return YW_KEY_LALT;
+	case AKEYCODE_ALT_RIGHT:
+		return YW_KEY_RALT;
+	case AKEYCODE_META_LEFT:
+		return YW_KEY_LSUPER;
+	case AKEYCODE_META_RIGHT:
+		return YW_KEY_RSUPER;
+	default:
+		return YW_KEY_UNKNOWN;
+	}
+}
+
+static void _YwAndroidOnDestroy(ANativeActivity *activity)
+{
+	YwWindowData *w = (YwWindowData *)activity->instance;
+	if (w) {
+		char cmd = CMD_DESTROY;
+		write(w->msgwrite, &cmd, 1);
+	}
+}
+
+static void _YwAndroidOnStart(ANativeActivity *activity)
+{
+	(void)activity;
+}
+static void _YwAndroidOnResume(ANativeActivity *activity)
+{
+	(void)activity;
+}
+
+static void _YwAndroidOnPause(ANativeActivity *activity)
+{
+	(void)activity;
+}
+static void _YwAndroidOnStop(ANativeActivity *activity)
+{
+	(void)activity;
+}
+
+static void _YwAndroidOnWindowFocusChanged(ANativeActivity *activity, int focused)
+{
+	(void)activity;
+	(void)focused;
+}
+
+static void _YwAndroidOnNativeWindowCreated(ANativeActivity *activity, ANativeWindow *window)
+{
+	YwWindowData *w = (YwWindowData *)activity->instance;
+	if (w) {
+		w->native_window = window;
+		char cmd = CMD_WINDOW_CREATED;
+		write(w->msgwrite, &cmd, 1);
+	}
+}
+
+static void _YwAndroidOnNativeWindowDestroyed(ANativeActivity *activity, ANativeWindow *window)
+{
+	(void)window;
+	YwWindowData *w = (YwWindowData *)activity->instance;
+	if (w) {
+		char cmd = CMD_WINDOW_DESTROYED;
+		write(w->msgwrite, &cmd, 1);
+	}
+}
+
+static void _YwAndroidOnInputQueueCreated(ANativeActivity *activity, AInputQueue *queue)
+{
+	YwWindowData *w = (YwWindowData *)activity->instance;
+	if (w) {
+		w->input_queue = queue;
+		AInputQueue_attachLooper(queue, w->looper, ALOOPER_POLL_CALLBACK, NULL, NULL);
+		char cmd = CMD_INPUT_AVAILABLE;
+		write(w->msgwrite, &cmd, 1);
+	}
+}
+
+static void _YwAndroidOnInputQueueDestroyed(ANativeActivity *activity, AInputQueue *queue)
+{
+	(void)activity;
+	AInputQueue_detachLooper(queue);
+}
+
+static int _YwAndroidPipeCallback(int fd, int events, void *data)
+{
+	(void)fd;
+	(void)events;
+	YwWindowData *w = (YwWindowData *)data;
+	YwState *s = w->state;
+	if (!s)
+		return 1;
+
+	char cmd;
+	if (read(w->msgread, &cmd, 1) == 1) {
+		switch (cmd) {
+		case CMD_WINDOW_CREATED:
+			if (w->native_window && s->e.loaded) {
+				if (w->egl_context_bound) {
+					// Recreate surface after window destruction
+					w->egl_surface = s->e.create_window_surface(w->egl_display, w->egl_config, w->native_window, NULL);
+					s->e.make_current(w->egl_display, w->egl_surface, w->egl_surface, w->egl_context);
+				} else {
+					w->egl_display = s->e.get_display(EGL_DEFAULT_DISPLAY);
+					s->e.initialize(w->egl_display, NULL, NULL);
+					s->e.bind_api(EGL_OPENGL_ES_API);
+					EGLint attribs[] = {
+						EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+						EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+						EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
+						EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8,
+						EGL_NONE
+					};
+					EGLint ncfg;
+					s->e.choose_config(w->egl_display, attribs, &w->egl_config, 1, &ncfg);
+					w->egl_context = s->e.create_context(w->egl_display, w->egl_config, EGL_NO_CONTEXT,
+									     (EGLint[]){ EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE });
+					w->egl_surface = s->e.create_window_surface(w->egl_display, w->egl_config, w->native_window, NULL);
+					s->e.make_current(w->egl_display, w->egl_surface, w->egl_surface, w->egl_context);
+					w->egl_context_bound = true;
+				}
+			}
+			break;
+		case CMD_WINDOW_DESTROYED:
+			if (w->egl_display != EGL_NO_DISPLAY) {
+				s->e.make_current(w->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+				if (w->egl_surface != EGL_NO_SURFACE) {
+					s->e.destroy_surface(w->egl_display, w->egl_surface);
+					w->egl_surface = EGL_NO_SURFACE;
+				}
+			}
+			break;
+		case CMD_DESTROY:
+			w->should_close = true;
+			break;
+		}
+	}
+	return 1;
+}
+
+YW_EXPORT void YwAndroidSetActivity(YwWindowData *w, ANativeActivity *activity)
+{
+	w->activity = activity;
+	activity->instance = w;
+	activity->callbacks->onDestroy = _YwAndroidOnDestroy;
+	activity->callbacks->onStart = _YwAndroidOnStart;
+	activity->callbacks->onResume = _YwAndroidOnResume;
+	activity->callbacks->onPause = _YwAndroidOnPause;
+	activity->callbacks->onStop = _YwAndroidOnStop;
+	activity->callbacks->onWindowFocusChanged = _YwAndroidOnWindowFocusChanged;
+	activity->callbacks->onNativeWindowCreated = _YwAndroidOnNativeWindowCreated;
+	activity->callbacks->onNativeWindowDestroyed = _YwAndroidOnNativeWindowDestroyed;
+	activity->callbacks->onInputQueueCreated = _YwAndroidOnInputQueueCreated;
+	activity->callbacks->onInputQueueDestroyed = _YwAndroidOnInputQueueDestroyed;
+
+	int pipes[2];
+	pipe(pipes);
+	w->msgread = pipes[0];
+	w->msgwrite = pipes[1];
+	fcntl(w->msgread, F_SETFL, O_NONBLOCK);
+
+	w->looper = ALooper_forThread();
+	if (!w->looper)
+		w->looper = ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS);
+	ALooper_addFd(w->looper, w->msgread, ALOOPER_POLL_CALLBACK, ALOOPER_EVENT_INPUT, _YwAndroidPipeCallback, w);
+}
+
+static bool _YwInitWindowAndroid(YwState *s, YwWindowData *w, const char *name)
+{
+	(void)name;
+	if (!w->activity) {
+		fprintf(stderr, "Android: call YwAndroidSetActivity() before YwInitWindow()\n");
+		return false;
+	}
+	if (!s->e.loaded && !_YwEGLLoad(s))
+		return false;
+
+	// Wait for window via pipe
+	while (!w->native_window && !w->should_close) {
+		ALooper_pollOnce(-1, NULL, NULL, NULL);
+	}
+	return w->native_window != NULL;
+}
+
+static void _YwPollEventsAndroid(YwState *s, YwWindowData *w)
+{
+	(void)s;
+	ALooper_pollOnce(0, NULL, NULL, NULL);
+	if (w->input_queue) {
+		AInputEvent *event = NULL;
+		while (AInputQueue_getEvent(w->input_queue, &event) >= 0) {
+			if (AInputQueue_preDispatchEvent(w->input_queue, event))
+				continue;
+			int32_t type = AInputEvent_getType(event);
+			if (type == AINPUT_EVENT_TYPE_KEY) {
+				int32_t action = AKeyEvent_getAction(event);
+				int32_t keycode = AKeyEvent_getKeyCode(event);
+				int32_t repeat = AKeyEvent_getRepeatCount(event);
+				int32_t meta = AKeyEvent_getMetaState(event);
+				bool pressed = (action == AKEY_EVENT_ACTION_DOWN);
+
+				YwKeyEvent e = {
+					.key = _YwAndroidKeycodeToKey(keycode),
+					.pressed = pressed,
+					.repeat = (repeat > 0),
+					.mods = ((meta & AMETA_SHIFT_ON) ? 1 : 0) |
+						((meta & AMETA_CTRL_ON) ? 2 : 0) |
+						((meta & AMETA_ALT_ON) ? 4 : 0) |
+						((meta & AMETA_META_ON) ? 8 : 0),
+				};
+				YW_KEYBUF_PUSH(&w->key_buf, e);
+			}
+			// TODO: handle motion events (touch)
+			AInputQueue_finishEvent(w->input_queue, event, 1);
+		}
+	}
+}
+#endif //YAWL_ANDROID //YAWL_ANDROID
 #ifdef YAWL_X11
 static YwKey _YwX11KeycodeToKey(uint8_t code)
 {
@@ -383,16 +844,6 @@ static YwKey _YwX11KeycodeToKey(uint8_t code)
 	}
 }
 
-#define YW_LOAD_SYMBOL(sym, lib, name)                                 \
-	do {                                                           \
-		void *tmp_symbol = dlsym(lib, name);                   \
-		if (tmp_symbol == NULL) {                              \
-			fprintf(stderr, "symbol not found: %s", name); \
-			return false;                                  \
-		}                                                      \
-		sym = tmp_symbol;                                      \
-	} while (0)
-
 static bool _YwX11Load(YwState *s)
 {
 	void *lib = dlopen("libxcb.so.1", RTLD_NOW | RTLD_LOCAL);
@@ -424,85 +875,6 @@ static bool _YwX11Load(YwState *s)
 	return true;
 }
 
-static bool _YwEGLLoad(YwState *s)
-{
-	void *egl = dlopen("libEGL.so.1", RTLD_NOW | RTLD_LOCAL);
-	if (!egl)
-		egl = dlopen("libEGL.so", RTLD_NOW | RTLD_LOCAL);
-	if (!egl) {
-		fprintf(stderr, "no EGL: %s\n", dlerror());
-		return false;
-	}
-
-	YW_LOAD_SYMBOL(s->e.get_proc_address, egl, "eglGetProcAddress");
-	YW_LOAD_SYMBOL(s->e.get_display, egl, "eglGetDisplay");
-	YW_LOAD_SYMBOL(s->e.initialize, egl, "eglInitialize");
-	YW_LOAD_SYMBOL(s->e.terminate, egl, "eglTerminate");
-	YW_LOAD_SYMBOL(s->e.create_context, egl, "eglCreateContext");
-	YW_LOAD_SYMBOL(s->e.make_current, egl, "eglMakeCurrent");
-	YW_LOAD_SYMBOL(s->e.swap_buffers, egl, "eglSwapBuffers");
-	YW_LOAD_SYMBOL(s->e.create_window_surface, egl, "eglCreateWindowSurface");
-	YW_LOAD_SYMBOL(s->e.bind_api, egl, "eglBindAPI");
-	YW_LOAD_SYMBOL(s->e.choose_config, egl, "eglChooseConfig");
-	YW_LOAD_SYMBOL(s->e.get_error, egl, "eglGetError");
-	YW_LOAD_SYMBOL(s->e.swap_interval, egl, "eglSwapInterval");
-	// #ifdef YAWL_EGL_EXTENDED
-	YW_LOAD_SYMBOL(s->e.get_platform_display, egl, "eglGetPlatformDisplay");
-	// #endif // YAWL_EGL_EXTENDED
-	s->e.loaded = true;
-
-	return true;
-}
-static bool _YwEGLCreateContext(YwState *s, YwWindowData *w)
-{
-#ifdef YAWL_X11
-	w->egl_display = s->e.get_platform_display(EGL_PLATFORM_XCB_EXT, w->conn, NULL);
-#else
-	w->egl_display = s->e.get_display(w->conn);
-#endif // YAWL_X11
-
-	if (w->egl_display == EGL_NO_DISPLAY)
-		return false;
-
-	EGLint major, minor;
-	if (!s->e.initialize(w->egl_display, &major, &minor))
-		return false;
-
-	s->e.bind_api(EGL_OPENGL_API);
-
-	EGLint attribs[] = {
-		EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
-		EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-		EGL_RED_SIZE, 8,
-		EGL_GREEN_SIZE, 8,
-		EGL_BLUE_SIZE, 8,
-		EGL_NONE
-	};
-
-	EGLConfig config;
-	EGLint num_configs;
-	if (!s->e.choose_config(w->egl_display, attribs, &config, 1, &num_configs) || num_configs < 1) {
-		fprintf(stderr, "No EGL config found\n");
-		return false;
-	}
-
-	w->egl_surface = s->e.create_window_surface(w->egl_display, config, w->win, NULL);
-	if (w->egl_surface == EGL_NO_SURFACE) {
-		EGLint err = s->e.get_error();
-		fprintf(stderr, "eglCreateWindowSurface failed: 0x%x (%d)\n", err, err);
-		return false;
-	}
-
-	EGLint ctx_attribs[] = { EGL_NONE };
-	w->egl_context = s->e.create_context(w->egl_display, config, EGL_NO_CONTEXT, ctx_attribs);
-	if (w->egl_context == EGL_NO_CONTEXT)
-		return false;
-
-	s->e.make_current(w->egl_display, w->egl_surface, w->egl_surface, w->egl_context);
-	s->e.swap_interval(w->egl_display, 0); // disable VSYNC
-	return true;
-}
-
 static xcb_screen_t *_YwGetScreen(YwState *s, xcb_connection_t *c)
 {
 	xcb_screen_iterator_t iter = s->x.setup_roots_iterator(s->x.get_setup(c));
@@ -512,8 +884,9 @@ static xcb_screen_t *_YwGetScreen(YwState *s, xcb_connection_t *c)
 	}
 	return NULL;
 }
-static bool _YwInitWindowX11(YwState *s, YwWindowData *w, const char *name)
+static bool _YwInitWindowX11(YwWindowData *w, const char *name)
 {
+	YwState *s = w->state;
 	if (!s->x.loaded)
 		if (!_YwX11Load(s))
 			return false;
@@ -587,8 +960,9 @@ static bool _YwInitWindowX11(YwState *s, YwWindowData *w, const char *name)
 	return true;
 }
 
-static void _YwPollEventsX11(YwState *s, YwWindowData *w)
+static void _YwPollEventsX11(YwWindowData *w)
 {
+	YwState *s = w->state;
 	xcb_generic_event_t *ev;
 	while ((ev = s->x.poll_for_event(w->conn))) {
 		switch (ev->response_type & ~0x80) {
@@ -626,13 +1000,6 @@ static void _YwPollEventsX11(YwState *s, YwWindowData *w)
 		}
 		free(ev);
 	}
-}
-static bool _YwLoadGLProcX11(YwState *s, void **proc, const char *name)
-{
-	void *p = NULL;
-	p = s->e.get_proc_address(name);
-	*proc = p;
-	return p != NULL;
 }
 #endif // YAWL_X11
 #if defined(YAWL_WIN32)
@@ -768,7 +1135,7 @@ static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 	}
 	return DefWindowProcA(hwnd, msg, wparam, lparam);
 }
-static bool _YwInitWindowWin32(YwState *s, YwWindowData *w, const char *name)
+static bool _YwInitWindowWin32(YwWindowData *w, const char *name)
 {
 	s->hinstance = GetModuleHandleA(NULL);
 
@@ -817,7 +1184,7 @@ static bool _YwInitWindowWin32(YwState *s, YwWindowData *w, const char *name)
 	s->wgl.swap_interval(0);
 	return true;
 }
-static void _YwPollEventsWin32(YwState *s, YwWindowData *w)
+static void _YwPollEventsWin32(YwWindowData *w)
 {
 	MSG msg;
 	while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
@@ -845,14 +1212,15 @@ static bool _YwInit(YwState *s)
 	return true;
 }
 
-YW_EXPORT void YwPollEvents(YwState *s, YwWindowData *w)
+YW_EXPORT void YwPollEvents(YwWindowData *w)
 {
 #ifdef YAWL_X11
-	_YwPollEventsX11(s, w);
+	_YwPollEventsX11(w);
 #elif defined(YAWL_WIN32)
-	_YwPollEventsWin32(s, w);
+	_YwPollEventsWin32(w);
 #else
-	fprintf(stderr, "Ywwl: Unsupported platform\n");
+#warning Unsupported platform
+	fprintf(stderr, "Yawl: Unsupported platform\n");
 #endif
 }
 
@@ -862,37 +1230,44 @@ YW_EXPORT bool YwInitWindow(YwState *s, YwWindowData *w, const char *name)
 		if (!_YwInit(s))
 			return false;
 	}
+	w->state = s;
 #ifdef YAWL_X11
-	return _YwInitWindowX11(s, w, name);
+	return _YwInitWindowX11(w, name);
 #elif defined(YAWL_WIN32)
-	return _YwInitWindowWin32(s, w, name);
+	return _YwInitWindowWin32(w, name);
 #else
-	fprintf(stderr, "Ywwl: Unsupported platform\n");
+#warning Unsupported platform
+	fprintf(stderr, "Yawl: Unsupported platform\n");
 	return false;
 #endif
 }
-YW_EXPORT void YwBeginDrawing(YwState *s, YwWindowData *w)
+YW_EXPORT void YwBeginDrawing(YwWindowData *w)
 {
-	(void)s;
 	(void)w;
 }
-YW_EXPORT void YwGLMakeCurrent(YwState *s, YwWindowData *w)
+YW_EXPORT void YwGLMakeCurrent(YwWindowData *w)
 {
+	YwState *s = w->state;
 #ifdef YAWL_X11
 	s->e.make_current(w->egl_display, w->egl_surface, w->egl_surface, w->egl_context);
-#endif
-#ifdef YAWL_WIN32
+#elif defined(YAWL_WIN32)
 	s->wgl.make_current(w->hdc, w->gl_context);
+#else
+#warning Unsupported platform
+	fprintf(stderr, "Yawl: Unsupported platform\n");
 #endif // YAWL_WIN32
 }
-YW_EXPORT void YwEndDrawing(YwState *s, YwWindowData *w)
+YW_EXPORT void YwEndDrawing(YwWindowData *w)
 {
+	YwState *s = w->state;
 #ifdef YAWL_X11
 	// s->x.flush(w->conn);
 	s->e.swap_buffers(w->egl_display, w->egl_surface);
-#endif // YAWL_X11
-#ifdef YAWL_WIN32
+#elif defined(YAWL_WIN32)
 	SwapBuffers(w->hdc);
+#else
+#warning Unsupported platform
+	fprintf(stderr, "Yawl: Unsupported platform\n");
 #endif // YAWL_WIN32
 }
 
@@ -900,15 +1275,17 @@ YW_EXPORT bool YwGLLoadProc(YwState *s, void **proc, const char *name)
 {
 #ifdef YAWL_WIN32
 	return _YwLoadGLProcWin32(s, proc, name);
-#endif // YAWL_WIN32
-#ifdef YAWL_X11
-	return _YwLoadGLProcX11(s, proc, name);
+#elif defined(YAWL_EGL)
+	return _YwLoadGLProcEGL(s, proc, name);
+#else
+#warning Unsupported platform
+	fprintf(stderr, "Yawl: Unsupported platform\n");
+	return false;
 #endif // YAWL_X11
 }
 
-YW_EXPORT bool YwNextKeyEvent(YwState *s, YwWindowData *w, YwKeyEvent *out)
+YW_EXPORT bool YwNextKeyEvent(YwWindowData *w, YwKeyEvent *out)
 {
-	(void)s;
 	struct YwKeyBuffer *kb = &w->key_buf;
 	if (kb->read == kb->write)
 		return false;
@@ -917,16 +1294,19 @@ YW_EXPORT bool YwNextKeyEvent(YwState *s, YwWindowData *w, YwKeyEvent *out)
 	return true;
 }
 
-YW_EXPORT void YwSetVSync(YwState *s, YwWindowData *w, bool enabled)
+YW_EXPORT void YwSetVSync(YwWindowData *w, bool enabled)
 {
+	YwState *s = w->state;
 	int interval = enabled ? 1 : 0;
-#ifdef YAWL_X11
+#ifdef YAWL_EGL
 	if (s->e.loaded)
 		s->e.swap_interval(w->egl_display, interval);
-#endif
-#ifdef YAWL_WIN32
+#elif defined(YAWL_WIN32)
 	if (s->wgl.loaded)
 		s->wgl.swap_interval(interval);
+#else
+#warning Unsupported platform
+	fprintf(stderr, "Yawl: Unsupported platform\n");
 #endif
 }
 

@@ -18,17 +18,18 @@ int main()
 	YwKeyEvent key_current[YW_KEY_COUNT] = { 0 };
 	YwKeyEvent key_prev[YW_KEY_COUNT] = { 0 };
 	YwInitWindow(&s, &w, "Hi!");
-	YwSetVSync(&s, &w, true);
-	load_gl_functions(&s);
+	YwSetVSync(&w, true);
+	struct GLFuncs gl = { 0 };
+	load_gl_functions(&s, &gl);
 
 	while (!w.should_close) {
-		YwPollEvents(&s, &w);
-		YwKeyEvent keyev = { 0 };
+		YwPollEvents(&w);
 		memcpy(key_prev, key_current, sizeof(key_prev));
-		while (YwNextKeyEvent(&s, &w, &keyev)) {
+		YwKeyEvent keyev = { 0 };
+		while (YwNextKeyEvent(&w, &keyev)) {
 			key_current[keyev.key] = keyev;
 		}
-		YwBeginDrawing(&s, &w);
+		YwBeginDrawing(&w);
 		gl.ClearColor(1.0f, 0.0f, 0.0f, 1.0f);
 		if (key_held(YW_KEY_B)) {
 			gl.ClearColor(0.0f, 0.0f, 1.0f, 1.0f);
@@ -37,6 +38,6 @@ int main()
 			gl.ClearColor(1.0f, 0.0f, 1.0f, 1.0f);
 		}
 		gl.Clear(GL_COLOR_BUFFER_BIT);
-		YwEndDrawing(&s, &w);
+		YwEndDrawing(&w);
 	}
 }
