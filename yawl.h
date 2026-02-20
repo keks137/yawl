@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 #if defined(_WIN32)
@@ -31,6 +32,80 @@ struct _YwWGLFuncs {
 
 #endif // YAWL_WIN32
 
+typedef enum {
+	YW_KEY_UNKNOWN = 0,
+	YW_KEY_A,
+	YW_KEY_B,
+	YW_KEY_C,
+	YW_KEY_D,
+	YW_KEY_E,
+	YW_KEY_F,
+	YW_KEY_G,
+	YW_KEY_H,
+	YW_KEY_I,
+	YW_KEY_J,
+	YW_KEY_K,
+	YW_KEY_L,
+	YW_KEY_M,
+	YW_KEY_N,
+	YW_KEY_O,
+	YW_KEY_P,
+	YW_KEY_Q,
+	YW_KEY_R,
+	YW_KEY_S,
+	YW_KEY_T,
+	YW_KEY_U,
+	YW_KEY_V,
+	YW_KEY_W,
+	YW_KEY_X,
+	YW_KEY_Y,
+	YW_KEY_Z,
+	YW_KEY_0,
+	YW_KEY_1,
+	YW_KEY_2,
+	YW_KEY_3,
+	YW_KEY_4,
+	YW_KEY_5,
+	YW_KEY_6,
+	YW_KEY_7,
+	YW_KEY_8,
+	YW_KEY_9,
+	YW_KEY_SPACE,
+	YW_KEY_ENTER,
+	YW_KEY_TAB,
+	YW_KEY_ESCAPE,
+	YW_KEY_BACKSPACE,
+	YW_KEY_UP,
+	YW_KEY_DOWN,
+	YW_KEY_LEFT,
+	YW_KEY_RIGHT,
+	YW_KEY_LSHIFT,
+	YW_KEY_RSHIFT,
+	YW_KEY_LCTRL,
+	YW_KEY_RCTRL,
+	YW_KEY_LALT,
+	YW_KEY_RALT,
+	YW_KEY_LSUPER,
+	YW_KEY_RSUPER, // super = win/cmd
+	YW_KEY_COUNT
+} YwKey;
+typedef struct {
+	YwKey key;
+	bool pressed;
+	bool repeat;
+	uint8_t mods; // bitmask: 1=shift, 2=ctrl, 4=alt, 8=super
+	// uint32_t timestamp; // seconds since some arbitrary epoch
+} YwKeyEvent;
+
+#ifndef YW_KEYBUF_SIZE
+#define YW_KEYBUF_SIZE 64
+#endif //YW_KEYBUF_SIZE
+
+struct YwKeyBuffer {
+	YwKeyEvent events[YW_KEYBUF_SIZE];
+	uint8_t write;
+	uint8_t read;
+};
 #ifdef YAWL_X11
 #define YAWL_EGL_EXTENDED
 #include <xcb/xcb.h>
@@ -113,10 +188,13 @@ struct _YwEGLFuncs {
 
 #endif //YAWL_X11
 
+// NOTE: each key is 2 bit
+
 typedef struct {
 	size_t width;
 	size_t height;
 	bool should_close;
+	struct YwKeyBuffer key_buf;
 #ifdef YAWL_X11
 	xcb_connection_t *conn;
 	xcb_window_t win;
@@ -164,12 +242,139 @@ typedef struct {
 bool YwInitWindow(YwState *s, YwWindowData *w, const char *name);
 void YwBeginDrawing(YwState *s, YwWindowData *w);
 void YwEndDrawing(YwState *s, YwWindowData *w);
-bool YwLoadGLProc(YwState *s, void **proc, const char *name);
+bool YwGLLoadProc(YwState *s, void **proc, const char *name);
+void YwGLMakeCurrent(YwState *s, YwWindowData *w);
 void YwSetVSync(YwState *s, YwWindowData *w, bool enabled);
+bool YwNextKeyEvent(YwState *s, YwWindowData *w, YwKeyEvent *out);
+void YwPollEvents(YwState *s, YwWindowData *w);
 
 #ifdef YAWL_IMPLEMENTATION
+#define YW_KEYBUF_PUSH(buf, ev)                                     \
+	do {                                                        \
+		uint8_t _next = (buf)->write + 1;                   \
+		if (_next >= YW_KEYBUF_SIZE)                        \
+			_next = 0;                                  \
+		if (_next == (buf)->read)                           \
+			(buf)->read = (_next + 1) % YW_KEYBUF_SIZE; \
+		(buf)->events[(buf)->write] = (ev);                 \
+		(buf)->write = _next;                               \
+	} while (0)
 
 #ifdef YAWL_X11
+static YwKey _YwX11KeycodeToKey(uint8_t code)
+{
+	switch (code) {
+	case 38:
+		return YW_KEY_A;
+	case 56:
+		return YW_KEY_B;
+	case 54:
+		return YW_KEY_C;
+	case 40:
+		return YW_KEY_D;
+	case 26:
+		return YW_KEY_E;
+	case 41:
+		return YW_KEY_F;
+	case 42:
+		return YW_KEY_G;
+	case 43:
+		return YW_KEY_H;
+	case 31:
+		return YW_KEY_I;
+	case 44:
+		return YW_KEY_J;
+	case 45:
+		return YW_KEY_K;
+	case 46:
+		return YW_KEY_L;
+	case 58:
+		return YW_KEY_M;
+	case 57:
+		return YW_KEY_N;
+	case 32:
+		return YW_KEY_O;
+	case 33:
+		return YW_KEY_P;
+	case 24:
+		return YW_KEY_Q;
+	case 27:
+		return YW_KEY_R;
+	case 39:
+		return YW_KEY_S;
+	case 28:
+		return YW_KEY_T;
+	case 30:
+		return YW_KEY_U;
+	case 55:
+		return YW_KEY_V;
+	case 25:
+		return YW_KEY_W;
+	case 53:
+		return YW_KEY_X;
+	case 29:
+		return YW_KEY_Y;
+	case 52:
+		return YW_KEY_Z;
+	case 19:
+		return YW_KEY_0;
+	case 10:
+		return YW_KEY_1;
+	case 11:
+		return YW_KEY_2;
+	case 12:
+		return YW_KEY_3;
+	case 13:
+		return YW_KEY_4;
+	case 14:
+		return YW_KEY_5;
+	case 15:
+		return YW_KEY_6;
+	case 16:
+		return YW_KEY_7;
+	case 17:
+		return YW_KEY_8;
+	case 18:
+		return YW_KEY_9;
+	case 65:
+		return YW_KEY_SPACE;
+	case 36:
+		return YW_KEY_ENTER;
+	case 23:
+		return YW_KEY_TAB;
+	case 9:
+		return YW_KEY_ESCAPE;
+	case 22:
+		return YW_KEY_BACKSPACE;
+	case 111:
+		return YW_KEY_UP;
+	case 116:
+		return YW_KEY_DOWN;
+	case 113:
+		return YW_KEY_LEFT;
+	case 114:
+		return YW_KEY_RIGHT;
+	case 50:
+		return YW_KEY_LSHIFT;
+	case 62:
+		return YW_KEY_RSHIFT;
+	case 37:
+		return YW_KEY_LCTRL;
+	case 105:
+		return YW_KEY_RCTRL;
+	case 64:
+		return YW_KEY_LALT;
+	case 108:
+		return YW_KEY_RALT;
+	case 133:
+		return YW_KEY_LSUPER;
+	case 134:
+		return YW_KEY_RSUPER;
+	default:
+		return YW_KEY_UNKNOWN;
+	}
+}
+
 #define YW_LOAD_SYMBOL(sym, lib, name)                                 \
 	do {                                                           \
 		void *tmp_symbol = dlsym(lib, name);                   \
@@ -321,7 +526,7 @@ static bool _YwInitWindowX11(YwState *s, YwWindowData *w, const char *name)
 	uint32_t mask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
 	uint32_t values[2] = {
 		w->screen->black_pixel,
-		XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_STRUCTURE_NOTIFY
+		XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE | XCB_EVENT_MASK_STRUCTURE_NOTIFY
 	};
 
 	s->x.create_window(
@@ -395,7 +600,21 @@ static void _YwPollEventsX11(YwState *s, YwWindowData *w)
 			break;
 		}
 		case XCB_KEY_PRESS:
+		case XCB_KEY_RELEASE: {
+			xcb_key_press_event_t *ke = (xcb_key_press_event_t *)ev;
+			YwKeyEvent e = {
+				.key = _YwX11KeycodeToKey(ke->detail),
+				.pressed = (ev->response_type & ~0x80) == XCB_KEY_PRESS,
+				.repeat = false, // X11 detect via XKB if you care
+				.mods = ((ke->state & XCB_MOD_MASK_SHIFT) ? 1 : 0) |
+					((ke->state & XCB_MOD_MASK_CONTROL) ? 2 : 0) |
+					((ke->state & XCB_MOD_MASK_1) ? 4 : 0) |
+					((ke->state & XCB_MOD_MASK_4) ? 8 : 0),
+				// .timestamp = ke->time
+			};
+			YW_KEYBUF_PUSH(&w->key_buf, e);
 			break;
+		}
 		}
 		free(ev);
 	}
@@ -452,6 +671,51 @@ static bool _YwWGLLoad(YwState *s)
 	return true;
 }
 
+static YwKey _YwVKToKey(int vk)
+{
+	if (vk >= 'A' && vk <= 'Z')
+		return YW_KEY_A + (vk - 'A');
+	if (vk >= '0' && vk <= '9')
+		return YW_KEY_0 + (vk - '0');
+	switch (vk) {
+	case VK_SPACE:
+		return YW_KEY_SPACE;
+	case VK_RETURN:
+		return YW_KEY_ENTER;
+	case VK_TAB:
+		return YW_KEY_TAB;
+	case VK_ESCAPE:
+		return YW_KEY_ESCAPE;
+	case VK_BACK:
+		return YW_KEY_BACKSPACE;
+	case VK_UP:
+		return YW_KEY_UP;
+	case VK_DOWN:
+		return YW_KEY_DOWN;
+	case VK_LEFT:
+		return YW_KEY_LEFT;
+	case VK_RIGHT:
+		return YW_KEY_RIGHT;
+	case VK_LSHIFT:
+		return YW_KEY_LSHIFT;
+	case VK_RSHIFT:
+		return YW_KEY_RSHIFT;
+	case VK_LCONTROL:
+		return YW_KEY_LCTRL;
+	case VK_RCONTROL:
+		return YW_KEY_RCTRL;
+	case VK_LMENU:
+		return YW_KEY_LALT;
+	case VK_RMENU:
+		return YW_KEY_RALT;
+	case VK_LWIN:
+		return YW_KEY_LSUPER;
+	case VK_RWIN:
+		return YW_KEY_RSUPER;
+	default:
+		return YW_KEY_UNKNOWN;
+	}
+}
 static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
 	YwWindowData *w = (YwWindowData *)GetWindowLongPtrA(hwnd, GWLP_USERDATA);
@@ -473,6 +737,26 @@ static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 			w->height = HIWORD(lparam);
 		}
 		return 0;
+	case WM_KEYDOWN:
+	case WM_KEYUP:
+	case WM_SYSKEYDOWN:
+	case WM_SYSKEYUP: {
+		if (!w)
+			return 0;
+		bool pressed = (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
+		YwKeyEvent e = {
+			.key = _YwVKToKey((int)wparam),
+			.pressed = pressed,
+			.repeat = pressed && (lparam & (1 << 30)), // bit 30 = prev state
+			.mods = ((GetKeyState(VK_SHIFT) < 0) ? 1 : 0) |
+				((GetKeyState(VK_CONTROL) < 0) ? 2 : 0) |
+				((GetKeyState(VK_MENU) < 0) ? 4 : 0) |
+				((GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0) ? 8 : 0),
+			// .timestamp = GetMessageTime()
+		};
+		YW_KEYBUF_PUSH(&w->key_buf, e);
+		return 0;
+	}
 	}
 	return DefWindowProcA(hwnd, msg, wparam, lparam);
 }
@@ -581,6 +865,11 @@ bool YwInitWindow(YwState *s, YwWindowData *w, const char *name)
 }
 void YwBeginDrawing(YwState *s, YwWindowData *w)
 {
+	(void)s;
+	(void)w;
+}
+void YwGLMakeCurrent(YwState *s, YwWindowData *w)
+{
 #ifdef YAWL_X11
 	s->e.make_current(w->egl_display, w->egl_surface, w->egl_surface, w->egl_context);
 #endif
@@ -599,7 +888,7 @@ void YwEndDrawing(YwState *s, YwWindowData *w)
 #endif // YAWL_WIN32
 }
 
-bool YwLoadGLProc(YwState *s, void **proc, const char *name)
+bool YwGLLoadProc(YwState *s, void **proc, const char *name)
 {
 #ifdef YAWL_WIN32
 	return _YwLoadGLProcWin32(s, proc, name);
@@ -607,6 +896,17 @@ bool YwLoadGLProc(YwState *s, void **proc, const char *name)
 #ifdef YAWL_X11
 	return _YwLoadGLProcX11(s, proc, name);
 #endif // YAWL_X11
+}
+
+bool YwNextKeyEvent(YwState *s, YwWindowData *w, YwKeyEvent *out)
+{
+	(void)s;
+	struct YwKeyBuffer *kb = &w->key_buf;
+	if (kb->read == kb->write)
+		return false;
+	*out = kb->events[kb->read];
+	kb->read = (kb->read + 1) % YW_KEYBUF_SIZE;
+	return true;
 }
 
 void YwSetVSync(YwState *s, YwWindowData *w, bool enabled)

@@ -17,11 +17,13 @@ int main()
 
 	while (!w.should_close && !w2.should_close) {
 		YwPollEvents(&s, &w);
+		YwGLMakeCurrent(&s, &w);
 		YwBeginDrawing(&s, &w);
 		gl.ClearColor(0.0f, 1.0f, 0.0f, 1.0f);
 		gl.Clear(GL_COLOR_BUFFER_BIT);
 		YwEndDrawing(&s, &w);
 		YwPollEvents(&s, &w2);
+		YwGLMakeCurrent(&s, &w2);
 		YwBeginDrawing(&s, &w2);
 		gl.ClearColor(1.0f, 0.0f, 0.0f, 1.0f);
 		gl.Clear(GL_COLOR_BUFFER_BIT);

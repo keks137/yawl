@@ -59,7 +59,7 @@ bool load_gl_functions(YwState *s);
 #include "loadopengl.h"
 #define YW_LOAD_GL_FUNC(dest, name)                                    \
 	do {                                                           \
-		if (!YwLoadGLProc(s, (void **)&dest, #name)) {         \
+		if (!YwGLLoadProc(s, (void **)&dest, #name)) {         \
 			fprintf(stderr, "Failed to load %s\n", #name); \
 			return false;                                  \
 		}                                                      \
