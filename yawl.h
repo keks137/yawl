@@ -17,6 +17,14 @@
 #endif // YAWL_WAYLAND
 #endif // _WIN32
 
+#if defined(__GNUC__)
+#define YW_EXPORT __attribute__((visibility("default")))
+#elif defined(_MSC_VER)
+#define YW_EXPORT __declspec(dllexport)
+#else
+#define YW_EXPORT
+#endif
+
 #ifdef YAWL_WIN32
 
 struct _YwWGLFuncs {
@@ -239,14 +247,14 @@ typedef struct {
 #define YwAlloca(size) __builtin_alloca(size)
 #endif
 
-bool YwInitWindow(YwState *s, YwWindowData *w, const char *name);
-void YwBeginDrawing(YwState *s, YwWindowData *w);
-void YwEndDrawing(YwState *s, YwWindowData *w);
-bool YwGLLoadProc(YwState *s, void **proc, const char *name);
-void YwGLMakeCurrent(YwState *s, YwWindowData *w);
-void YwSetVSync(YwState *s, YwWindowData *w, bool enabled);
-bool YwNextKeyEvent(YwState *s, YwWindowData *w, YwKeyEvent *out);
-void YwPollEvents(YwState *s, YwWindowData *w);
+YW_EXPORT bool YwInitWindow(YwState *s, YwWindowData *w, const char *name);
+YW_EXPORT void YwBeginDrawing(YwState *s, YwWindowData *w);
+YW_EXPORT void YwEndDrawing(YwState *s, YwWindowData *w);
+YW_EXPORT bool YwGLLoadProc(YwState *s, void **proc, const char *name);
+YW_EXPORT void YwGLMakeCurrent(YwState *s, YwWindowData *w);
+YW_EXPORT void YwSetVSync(YwState *s, YwWindowData *w, bool enabled);
+YW_EXPORT bool YwNextKeyEvent(YwState *s, YwWindowData *w, YwKeyEvent *out);
+YW_EXPORT void YwPollEvents(YwState *s, YwWindowData *w);
 
 #ifdef YAWL_IMPLEMENTATION
 #define YW_KEYBUF_PUSH(buf, ev)                                     \
@@ -837,7 +845,7 @@ static bool _YwInit(YwState *s)
 	return true;
 }
 
-void YwPollEvents(YwState *s, YwWindowData *w)
+YW_EXPORT void YwPollEvents(YwState *s, YwWindowData *w)
 {
 #ifdef YAWL_X11
 	_YwPollEventsX11(s, w);
@@ -848,7 +856,7 @@ void YwPollEvents(YwState *s, YwWindowData *w)
 #endif
 }
 
-bool YwInitWindow(YwState *s, YwWindowData *w, const char *name)
+YW_EXPORT bool YwInitWindow(YwState *s, YwWindowData *w, const char *name)
 {
 	if (!s->initialized) {
 		if (!_YwInit(s))
@@ -863,12 +871,12 @@ bool YwInitWindow(YwState *s, YwWindowData *w, const char *name)
 	return false;
 #endif
 }
-void YwBeginDrawing(YwState *s, YwWindowData *w)
+YW_EXPORT void YwBeginDrawing(YwState *s, YwWindowData *w)
 {
 	(void)s;
 	(void)w;
 }
-void YwGLMakeCurrent(YwState *s, YwWindowData *w)
+YW_EXPORT void YwGLMakeCurrent(YwState *s, YwWindowData *w)
 {
 #ifdef YAWL_X11
 	s->e.make_current(w->egl_display, w->egl_surface, w->egl_surface, w->egl_context);
@@ -877,7 +885,7 @@ void YwGLMakeCurrent(YwState *s, YwWindowData *w)
 	s->wgl.make_current(w->hdc, w->gl_context);
 #endif // YAWL_WIN32
 }
-void YwEndDrawing(YwState *s, YwWindowData *w)
+YW_EXPORT void YwEndDrawing(YwState *s, YwWindowData *w)
 {
 #ifdef YAWL_X11
 	// s->x.flush(w->conn);
@@ -888,7 +896,7 @@ void YwEndDrawing(YwState *s, YwWindowData *w)
 #endif // YAWL_WIN32
 }
 
-bool YwGLLoadProc(YwState *s, void **proc, const char *name)
+YW_EXPORT bool YwGLLoadProc(YwState *s, void **proc, const char *name)
 {
 #ifdef YAWL_WIN32
 	return _YwLoadGLProcWin32(s, proc, name);
@@ -898,7 +906,7 @@ bool YwGLLoadProc(YwState *s, void **proc, const char *name)
 #endif // YAWL_X11
 }
 
-bool YwNextKeyEvent(YwState *s, YwWindowData *w, YwKeyEvent *out)
+YW_EXPORT bool YwNextKeyEvent(YwState *s, YwWindowData *w, YwKeyEvent *out)
 {
 	(void)s;
 	struct YwKeyBuffer *kb = &w->key_buf;
@@ -909,7 +917,7 @@ bool YwNextKeyEvent(YwState *s, YwWindowData *w, YwKeyEvent *out)
 	return true;
 }
 
-void YwSetVSync(YwState *s, YwWindowData *w, bool enabled)
+YW_EXPORT void YwSetVSync(YwState *s, YwWindowData *w, bool enabled)
 {
 	int interval = enabled ? 1 : 0;
 #ifdef YAWL_X11

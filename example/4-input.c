@@ -22,13 +22,13 @@ int main()
 	load_gl_functions(&s);
 
 	while (!w.should_close) {
-		memcpy(key_prev, key_current, sizeof(key_prev));
 		YwPollEvents(&s, &w);
 		YwKeyEvent keyev = { 0 };
-		YwBeginDrawing(&s, &w);
+		memcpy(key_prev, key_current, sizeof(key_prev));
 		while (YwNextKeyEvent(&s, &w, &keyev)) {
 			key_current[keyev.key] = keyev;
 		}
+		YwBeginDrawing(&s, &w);
 		gl.ClearColor(1.0f, 0.0f, 0.0f, 1.0f);
 		if (key_held(YW_KEY_B)) {
 			gl.ClearColor(0.0f, 0.0f, 1.0f, 1.0f);

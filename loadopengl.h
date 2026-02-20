@@ -31,6 +31,7 @@ struct GLFuncs {
 	PFNGLGETPROGRAMIVPROC GetProgramiv;
 	PFNGLUSEPROGRAMPROC UseProgram;
 	PFNGLDELETESHADERPROC DeleteShader;
+	PFNGLDELETEPROGRAMPROC DeleteProgram;
 	PFNGLVERTEXATTRIBPOINTERPROC VertexAttribPointer;
 	PFNGLENABLEVERTEXATTRIBARRAYPROC EnableVertexAttribArray;
 	PFNGLGENVERTEXARRAYSPROC GenVertexArrays;
@@ -53,7 +54,7 @@ struct GLFuncs {
 	PFNGLUNIFORM3FPROC Uniform3f;
 	PFNGLUNIFORM2FPROC Uniform2f;
 };
-bool load_gl_functions(YwState *s);
+bool load_gl_functions(YwState *s, struct GLFuncs *gl);
 
 #ifdef LOADOPENGL_IMPLEMENTATION
 #include "loadopengl.h"
@@ -65,56 +66,55 @@ bool load_gl_functions(YwState *s);
 		}                                                      \
 	} while (0)
 
-struct GLFuncs gl = { 0 };
-
-bool load_gl_functions(YwState *s)
+bool load_gl_functions(YwState *s, struct GLFuncs *gl)
 {
-	YW_LOAD_GL_FUNC(gl.Uniform3f, glUniform3f);
-	YW_LOAD_GL_FUNC(gl.Uniform2f, glUniform2f);
-	YW_LOAD_GL_FUNC(gl.Enable, glEnable);
-	YW_LOAD_GL_FUNC(gl.CullFace, glCullFace);
-	YW_LOAD_GL_FUNC(gl.ActiveTexture, glActiveTexture);
-	YW_LOAD_GL_FUNC(gl.Uniform1i, glUniform1i);
-	YW_LOAD_GL_FUNC(gl.GetError, glGetError);
-	YW_LOAD_GL_FUNC(gl.UniformMatrix4fv, glUniformMatrix4fv);
-	YW_LOAD_GL_FUNC(gl.GetUniformLocation, glGetUniformLocation);
-	YW_LOAD_GL_FUNC(gl.TexParameteri, glTexParameteri);
-	YW_LOAD_GL_FUNC(gl.GenerateMipmap, glGenerateMipmap);
-	YW_LOAD_GL_FUNC(gl.TexImage2D, glTexImage2D);
-	YW_LOAD_GL_FUNC(gl.BindTexture, glBindTexture);
-	YW_LOAD_GL_FUNC(gl.GenTextures, glGenTextures);
-	YW_LOAD_GL_FUNC(gl.PolygonMode, glPolygonMode);
-	YW_LOAD_GL_FUNC(gl.DrawElements, glDrawElements);
-	YW_LOAD_GL_FUNC(gl.DrawArrays, glDrawArrays);
-	YW_LOAD_GL_FUNC(gl.BindVertexArray, glBindVertexArray);
-	YW_LOAD_GL_FUNC(gl.GenVertexArrays, glGenVertexArrays);
-	YW_LOAD_GL_FUNC(gl.EnableVertexAttribArray, glEnableVertexAttribArray);
-	YW_LOAD_GL_FUNC(gl.VertexAttribPointer, glVertexAttribPointer);
-	YW_LOAD_GL_FUNC(gl.DeleteShader, glDeleteShader);
-	YW_LOAD_GL_FUNC(gl.UseProgram, glUseProgram);
-	YW_LOAD_GL_FUNC(gl.GetProgramiv, glGetProgramiv);
-	YW_LOAD_GL_FUNC(gl.GetProgramInfoLog, glGetProgramInfoLog);
-	YW_LOAD_GL_FUNC(gl.LinkProgram, glLinkProgram);
-	YW_LOAD_GL_FUNC(gl.AttachShader, glAttachShader);
-	YW_LOAD_GL_FUNC(gl.CreateProgram, glCreateProgram);
-	YW_LOAD_GL_FUNC(gl.GetShaderInfoLog, glGetShaderInfoLog);
-	YW_LOAD_GL_FUNC(gl.GetShaderiv, glGetShaderiv);
-	YW_LOAD_GL_FUNC(gl.CompileShader, glCompileShader);
-	YW_LOAD_GL_FUNC(gl.ShaderSource, glShaderSource);
-	YW_LOAD_GL_FUNC(gl.CreateShader, glCreateShader);
-	YW_LOAD_GL_FUNC(gl.BufferData, glBufferData);
-	YW_LOAD_GL_FUNC(gl.BindBuffer, glBindBuffer);
-	YW_LOAD_GL_FUNC(gl.GenBuffers, glGenBuffers);
-	YW_LOAD_GL_FUNC(gl.Clear, glClear);
-	YW_LOAD_GL_FUNC(gl.ClearColor, glClearColor);
-	YW_LOAD_GL_FUNC(gl.Viewport, glViewport);
-	YW_LOAD_GL_FUNC(gl.DeleteBuffers, glDeleteBuffers);
-	YW_LOAD_GL_FUNC(gl.DeleteVertexArrays, glDeleteVertexArrays);
-	YW_LOAD_GL_FUNC(gl.TexParameterfv, glTexParameterfv);
-	YW_LOAD_GL_FUNC(gl.BufferSubData, glBufferSubData);
-	YW_LOAD_GL_FUNC(gl.Uniform3fv, glUniform3fv);
-	YW_LOAD_GL_FUNC(gl.Uniform1f, glUniform1f);
-	YW_LOAD_GL_FUNC(gl.VertexAttribIPointer, glVertexAttribIPointer);
+	YW_LOAD_GL_FUNC(gl->Uniform3f, glUniform3f);
+	YW_LOAD_GL_FUNC(gl->Uniform2f, glUniform2f);
+	YW_LOAD_GL_FUNC(gl->Enable, glEnable);
+	YW_LOAD_GL_FUNC(gl->CullFace, glCullFace);
+	YW_LOAD_GL_FUNC(gl->ActiveTexture, glActiveTexture);
+	YW_LOAD_GL_FUNC(gl->Uniform1i, glUniform1i);
+	YW_LOAD_GL_FUNC(gl->GetError, glGetError);
+	YW_LOAD_GL_FUNC(gl->UniformMatrix4fv, glUniformMatrix4fv);
+	YW_LOAD_GL_FUNC(gl->GetUniformLocation, glGetUniformLocation);
+	YW_LOAD_GL_FUNC(gl->TexParameteri, glTexParameteri);
+	YW_LOAD_GL_FUNC(gl->GenerateMipmap, glGenerateMipmap);
+	YW_LOAD_GL_FUNC(gl->TexImage2D, glTexImage2D);
+	YW_LOAD_GL_FUNC(gl->BindTexture, glBindTexture);
+	YW_LOAD_GL_FUNC(gl->GenTextures, glGenTextures);
+	YW_LOAD_GL_FUNC(gl->PolygonMode, glPolygonMode);
+	YW_LOAD_GL_FUNC(gl->DrawElements, glDrawElements);
+	YW_LOAD_GL_FUNC(gl->DrawArrays, glDrawArrays);
+	YW_LOAD_GL_FUNC(gl->BindVertexArray, glBindVertexArray);
+	YW_LOAD_GL_FUNC(gl->GenVertexArrays, glGenVertexArrays);
+	YW_LOAD_GL_FUNC(gl->EnableVertexAttribArray, glEnableVertexAttribArray);
+	YW_LOAD_GL_FUNC(gl->VertexAttribPointer, glVertexAttribPointer);
+	YW_LOAD_GL_FUNC(gl->DeleteShader, glDeleteShader);
+	YW_LOAD_GL_FUNC(gl->DeleteProgram, glDeleteProgram);
+	YW_LOAD_GL_FUNC(gl->UseProgram, glUseProgram);
+	YW_LOAD_GL_FUNC(gl->GetProgramiv, glGetProgramiv);
+	YW_LOAD_GL_FUNC(gl->GetProgramInfoLog, glGetProgramInfoLog);
+	YW_LOAD_GL_FUNC(gl->LinkProgram, glLinkProgram);
+	YW_LOAD_GL_FUNC(gl->AttachShader, glAttachShader);
+	YW_LOAD_GL_FUNC(gl->CreateProgram, glCreateProgram);
+	YW_LOAD_GL_FUNC(gl->GetShaderInfoLog, glGetShaderInfoLog);
+	YW_LOAD_GL_FUNC(gl->GetShaderiv, glGetShaderiv);
+	YW_LOAD_GL_FUNC(gl->CompileShader, glCompileShader);
+	YW_LOAD_GL_FUNC(gl->ShaderSource, glShaderSource);
+	YW_LOAD_GL_FUNC(gl->CreateShader, glCreateShader);
+	YW_LOAD_GL_FUNC(gl->BufferData, glBufferData);
+	YW_LOAD_GL_FUNC(gl->BindBuffer, glBindBuffer);
+	YW_LOAD_GL_FUNC(gl->GenBuffers, glGenBuffers);
+	YW_LOAD_GL_FUNC(gl->Clear, glClear);
+	YW_LOAD_GL_FUNC(gl->ClearColor, glClearColor);
+	YW_LOAD_GL_FUNC(gl->Viewport, glViewport);
+	YW_LOAD_GL_FUNC(gl->DeleteBuffers, glDeleteBuffers);
+	YW_LOAD_GL_FUNC(gl->DeleteVertexArrays, glDeleteVertexArrays);
+	YW_LOAD_GL_FUNC(gl->TexParameterfv, glTexParameterfv);
+	YW_LOAD_GL_FUNC(gl->BufferSubData, glBufferSubData);
+	YW_LOAD_GL_FUNC(gl->Uniform3fv, glUniform3fv);
+	YW_LOAD_GL_FUNC(gl->Uniform1f, glUniform1f);
+	YW_LOAD_GL_FUNC(gl->VertexAttribIPointer, glVertexAttribIPointer);
 
 	return true;
 }
