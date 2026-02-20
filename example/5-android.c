@@ -19,9 +19,11 @@ typedef struct {
 	ANativeActivity *activity;
 } App;
 
+void game_main(YwState *s, YwWindowData *w);
 // The rendering thread function
 static void *rendering_thread(void *arg)
 {
+	LOGI("Rendering thread started");
 	App *app = (App *)arg;
 
 	// Prepare a looper for this thread and attach the pipe's read end
@@ -30,25 +32,8 @@ static void *rendering_thread(void *arg)
 		      ALOOPER_EVENT_INPUT, _YwAndroidPipeCallback, &app->window);
 	app->window.looper = looper; // store if needed elsewhere
 
+	game_main(&app->state, &app->window);
 	// Now initialize the window – this will wait until the main thread sends CMD_WINDOW_CREATED
-	if (!YwInitWindow(&app->state, &app->window, "app")) {
-		LOGI("YwInitWindow failed");
-		return NULL;
-	}
-
-	YwSetVSync(&app->window, true);
-
-	struct GLFuncs gl = { 0 };
-	load_gl_functions(&app->state, &gl);
-	gl.ClearColor(1.0f, 0.0f, 0.0f, 1.0f);
-	LOGI("Rendering thread started");
-
-	while (!app->window.should_close) {
-		YwPollEvents(&app->window);
-		YwBeginDrawing(&app->window);
-		gl.Clear(GL_COLOR_BUFFER_BIT);
-		YwEndDrawing(&app->window);
-	}
 
 	return NULL;
 }
@@ -75,4 +60,25 @@ void ANativeActivity_onCreate(ANativeActivity *activity,
 	pthread_attr_destroy(&attr);
 
 	// Return immediately – main thread now handles Android events
+}
+
+void game_main(YwState *s, YwWindowData *w)
+{
+	if (!YwInitWindow(s, w, "app")) {
+		LOGI("YwInitWindow failed");
+		return;
+	}
+
+	YwSetVSync(w, true);
+
+	struct GLFuncs gl = { 0 };
+	load_gl_functions(s, &gl);
+	gl.ClearColor(1.0f, 0.0f, 1.0f, 1.0f);
+
+	while (!w->should_close) {
+		YwPollEvents(w);
+		YwBeginDrawing(w);
+		gl.Clear(GL_COLOR_BUFFER_BIT);
+		YwEndDrawing(w);
+	}
 }

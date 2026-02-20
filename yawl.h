@@ -562,8 +562,24 @@ static int _YwAndroidPipeCallback(int fd, int events, void *data)
 	char cmd;
 	if (read(w->msgread, &cmd, 1) == 1) {
 		switch (cmd) {
-		case CMD_WINDOW_CREATED:
-			break;
+		case CMD_WINDOW_CREATED: {
+			if (w->egl_display != EGL_NO_DISPLAY && w->egl_context != EGL_NO_CONTEXT) {
+				// Destroy old surface if any (should be NULL already, but be safe)
+				if (w->egl_surface != EGL_NO_SURFACE) {
+					s->e.destroy_surface(w->egl_display, w->egl_surface);
+					w->egl_surface = EGL_NO_SURFACE;
+				}
+				// Create new surface from the current native window
+				w->egl_surface = s->e.create_window_surface(w->egl_display,
+									    w->egl_config, w->native_window, NULL);
+				if (w->egl_surface != EGL_NO_SURFACE) {
+					s->e.make_current(w->egl_display, w->egl_surface,
+							  w->egl_surface, w->egl_context);
+				} else {
+					// Log error
+				}
+			}
+		} break;
 		case CMD_WINDOW_DESTROYED:
 			if (w->egl_display != EGL_NO_DISPLAY) {
 				s->e.make_current(w->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
@@ -624,8 +640,12 @@ static bool _YwInitWindowAndroid(YwWindowData *w, const char *name)
 	if (!w->native_window)
 		return false;
 	w->egl_display = s->e.get_display(EGL_DEFAULT_DISPLAY);
-	s->e.initialize(w->egl_display, NULL, NULL);
-	s->e.bind_api(EGL_OPENGL_ES_API);
+	if (w->egl_display == EGL_NO_DISPLAY)
+		return false;
+	if (!s->e.initialize(w->egl_display, NULL, NULL))
+		return false;
+	if (!s->e.bind_api(EGL_OPENGL_ES_API))
+		return false;
 	EGLint attribs[] = {
 		EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
 		EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
@@ -634,11 +654,17 @@ static bool _YwInitWindowAndroid(YwWindowData *w, const char *name)
 		EGL_NONE
 	};
 	EGLint ncfg;
-	s->e.choose_config(w->egl_display, attribs, &w->egl_config, 1, &ncfg);
+	if (!s->e.choose_config(w->egl_display, attribs, &w->egl_config, 1, &ncfg) || ncfg < 1)
+		return false;
 	w->egl_context = s->e.create_context(w->egl_display, w->egl_config, EGL_NO_CONTEXT,
 					     (EGLint[]){ EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE });
+	if (w->egl_context == EGL_NO_CONTEXT)
+		return false;
 	w->egl_surface = s->e.create_window_surface(w->egl_display, w->egl_config, w->native_window, NULL);
-	s->e.make_current(w->egl_display, w->egl_surface, w->egl_surface, w->egl_context);
+	if (w->egl_surface == EGL_NO_SURFACE)
+		return false;
+	if (!s->e.make_current(w->egl_display, w->egl_surface, w->egl_surface, w->egl_context))
+		return false;
 	w->egl_context_bound = true;
 
 	return true;
