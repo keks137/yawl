@@ -2,7 +2,11 @@
 #define INCLUDE_SRC_LOADOPENGL_H_
 
 #include "yawl.h"
+#ifdef YAWL_ANDROID
+#include <GLES3/gl3.h>
+#else
 #include <GL/glcorearb.h>
+#endif // YAWL_ANDROID
 #include <stdbool.h>
 
 struct GLFuncs {
@@ -38,7 +42,6 @@ struct GLFuncs {
 	PFNGLBINDVERTEXARRAYPROC BindVertexArray;
 	PFNGLDRAWARRAYSPROC DrawArrays;
 	PFNGLDRAWELEMENTSPROC DrawElements;
-	PFNGLPOLYGONMODEPROC PolygonMode;
 	PFNGLGENTEXTURESPROC GenTextures;
 	PFNGLBINDTEXTUREPROC BindTexture;
 	PFNGLTEXIMAGE2DPROC TexImage2D;
@@ -82,7 +85,6 @@ bool load_gl_functions(YwState *s, struct GLFuncs *gl)
 	YW_LOAD_GL_FUNC(gl->TexImage2D, glTexImage2D);
 	YW_LOAD_GL_FUNC(gl->BindTexture, glBindTexture);
 	YW_LOAD_GL_FUNC(gl->GenTextures, glGenTextures);
-	YW_LOAD_GL_FUNC(gl->PolygonMode, glPolygonMode);
 	YW_LOAD_GL_FUNC(gl->DrawElements, glDrawElements);
 	YW_LOAD_GL_FUNC(gl->DrawArrays, glDrawArrays);
 	YW_LOAD_GL_FUNC(gl->BindVertexArray, glBindVertexArray);
