@@ -1,5 +1,5 @@
 #define YAWL_IMPLEMENTATION
-#include "yawl.h"
+#include "../yawl.h"
 int main()
 {
 	YwState s = { 0 };
