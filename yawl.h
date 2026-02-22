@@ -37,6 +37,17 @@
 #define YW_EXPORT
 #endif
 
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define YW_STATIC_ASSERT(expr, msg) _Static_assert(expr, msg)
+
+#elif defined(__cplusplus) && __cplusplus >= 201103L
+#define YW_STATIC_ASSERT(expr, msg) static_assert(expr, msg)
+
+#else
+#define YW_STATIC_ASSERT(expr, msg) \
+	typedef char VASSERT_STATIC_##__LINE__[(expr) ? 1 : -1]
+#endif
+
 #ifdef YAWL_WIN32
 
 struct _YwWGLFuncs {
@@ -118,9 +129,10 @@ enum {
 	YW_KEYMOD_ALT = 8,
 	YW_KEYMOD_SUPER = 16,
 };
+typedef uint8_t YwKeyState;
 typedef struct {
 	YwKey key;
-	uint8_t pressed; // bitmask: 1=pressed + mods: 2=shift, 4=ctrl, 8=alt, 16=super
+	YwKeyState pressed; // bitmask: 1=pressed + mods: 2=shift, 4=ctrl, 8=alt, 16=super
 } YwKeyEvent;
 
 #ifndef YW_KEYBUF_SIZE
@@ -239,11 +251,16 @@ typedef struct {
 } YwState;
 
 typedef struct {
+	YwKeyState current[YW_KEY_COUNT];
+	YwKeyState prev[YW_KEY_COUNT];
+} YwKeysState;
+typedef struct {
 	size_t width;
 	size_t height;
 	bool should_close;
 	struct YwKeyBuffer key_buf;
 	YwState *state;
+	YwKeysState keys;
 
 #ifdef YAWL_X11
 	xcb_connection_t *conn;
@@ -274,10 +291,13 @@ typedef struct {
 
 #endif // YAWL_ANDROID
 } YwWindowData;
-#ifndef YwMemset
 #include <string.h>
+#ifndef YwMemset
 #define YwMemset(ptr, val, n_bytes) memset(ptr, val, n_bytes)
 #endif //YwMemset
+#ifndef YwMemcpy
+#define YwMemcpy(dst, src, n_bytes) memcpy(dst, src, n_bytes)
+#endif // YwMemcpy
 
 #if defined(_MSC_VER)
 #include <malloc.h>
@@ -294,11 +314,60 @@ YW_EXPORT void YwGLMakeCurrent(YwWindowData *w);
 YW_EXPORT void YwSetVSync(YwWindowData *w, bool enabled);
 YW_EXPORT bool YwNextKeyEvent(YwWindowData *w, YwKeyEvent *out);
 YW_EXPORT void YwPollEvents(YwWindowData *w);
+YW_EXPORT bool YwKeyPressed(YwWindowData *w, YwKey key);
+YW_EXPORT bool YwKeyReleased(YwWindowData *w, YwKey key);
+YW_EXPORT bool YwKeyDown(YwWindowData *w, YwKey key);
+YW_EXPORT bool YwKeyPressedMods(YwWindowData *w, YwKey key, YwKeyState mod_mask);
+YW_EXPORT bool YwKeyReleasedMods(YwWindowData *w, YwKey key, YwKeyState mod_mask);
+YW_EXPORT bool YwKeyDownMods(YwWindowData *w, YwKey key, YwKeyState mod_mask);
+
 #ifdef YAWL_ANDROID
 YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindowData *w, ANativeActivity *activity);
 #endif
 
 #ifdef YAWL_IMPLEMENTATION
+YW_EXPORT bool YwKeyPressedMods(YwWindowData *w, YwKey key, YwKeyState mod_mask)
+{
+	if (w->keys.current[key] && !w->keys.prev[key] && (w->keys.current[key] & mod_mask)) {
+		return true;
+	}
+	return false;
+}
+YW_EXPORT bool YwKeyReleasedMods(YwWindowData *w, YwKey key, YwKeyState mod_mask)
+{
+	if (!w->keys.current[key] && w->keys.prev[key] && (w->keys.prev[key] & mod_mask)) { // NOTE: we check mask on prev because not pressed keys dont hold state
+		return true;
+	}
+	return false;
+}
+YW_EXPORT bool YwKeyDownMods(YwWindowData *w, YwKey key, YwKeyState mod_mask)
+{
+	if (w->keys.current[key] && (w->keys.current[key] & mod_mask)) {
+		return true;
+	}
+	return false;
+}
+YW_EXPORT bool YwKeyPressed(YwWindowData *w, YwKey key)
+{
+	if (w->keys.current[key] && !w->keys.prev[key]) {
+		return true;
+	}
+	return false;
+}
+YW_EXPORT bool YwKeyReleased(YwWindowData *w, YwKey key)
+{
+	if (!w->keys.current[key] && w->keys.prev[key]) {
+		return true;
+	}
+	return false;
+}
+YW_EXPORT bool YwKeyDown(YwWindowData *w, YwKey key)
+{
+	if (w->keys.current[key]) {
+		return true;
+	}
+	return false;
+}
 #ifdef __linux__
 #include <dlfcn.h>
 #define YW_LOAD_SYMBOL(sym, lib, name)                                 \
@@ -696,8 +765,10 @@ static void _YwPollEventsAndroid(YwWindowData *w)
 						       ((meta & AMETA_ALT_ON) ? YW_KEYMOD_ALT : 0) |
 						       ((meta & AMETA_META_ON) ? YW_KEYMOD_SUPER : 0);
 
+				YwKey key = _YwAndroidKeycodeToKey(keycode);
+				w->keys.current[key] = pressed ? pressed_data : 0;
 				YwKeyEvent e = {
-					.key = _YwAndroidKeycodeToKey(keycode),
+					.key = key,
 					.pressed = pressed ? pressed_data : 0,
 					// .repeat = (repeat > 0),
 				};
@@ -1016,12 +1087,14 @@ static void _YwPollEventsX11(YwWindowData *w)
 		case XCB_KEY_RELEASE: {
 			xcb_key_press_event_t *ke = (xcb_key_press_event_t *)ev;
 			bool pressed = ((ev->response_type & ~0x80) == XCB_KEY_PRESS);
-			uint8_t pressed_data = 1 | ((ke->state & XCB_MOD_MASK_SHIFT) ? YW_KEYMOD_SHIFT : 0) |
-					       ((ke->state & XCB_MOD_MASK_CONTROL) ? YW_KEYMOD_CTRL : 0) |
-					       ((ke->state & XCB_MOD_MASK_1) ? YW_KEYMOD_ALT : 0) |
-					       ((ke->state & XCB_MOD_MASK_4) ? YW_KEYMOD_SUPER : 0);
+			YwKeyState pressed_data = 1 | ((ke->state & XCB_MOD_MASK_SHIFT) ? YW_KEYMOD_SHIFT : 0) |
+						  ((ke->state & XCB_MOD_MASK_CONTROL) ? YW_KEYMOD_CTRL : 0) |
+						  ((ke->state & XCB_MOD_MASK_1) ? YW_KEYMOD_ALT : 0) |
+						  ((ke->state & XCB_MOD_MASK_4) ? YW_KEYMOD_SUPER : 0);
+			YwKey key = _YwX11KeycodeToKey(ke->detail);
+			w->keys.current[key] = pressed ? pressed_data : 0;
 			YwKeyEvent e = {
-				.key = _YwX11KeycodeToKey(ke->detail),
+				.key = key,
 				.pressed = pressed ? pressed_data : 0,
 				// .repeat = false, // X11 detect via XKB if you care
 				// .timestamp = ke->time
@@ -1168,10 +1241,11 @@ static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 			return 0;
 		YwKey key = _YwVKToKey((int)wparam);
 		bool pressed = (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
-		uint8_t pressed_data = pressed | ((GetKeyState(VK_SHIFT) < 0) ? YW_KEYMOD_SHIFT : 0) |
-				       ((GetKeyState(VK_CONTROL) < 0) ? YW_KEYMOD_CTRL : 0) |
-				       ((GetKeyState(VK_MENU) < 0) ? YW_KEYMOD_ALT : 0) |
-				       ((GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0) ? YW_KEYMOD_SUPER : 0);
+		YwKeyState pressed_data = pressed | ((GetKeyState(VK_SHIFT) < 0) ? YW_KEYMOD_SHIFT : 0) |
+					   ((GetKeyState(VK_CONTROL) < 0) ? YW_KEYMOD_CTRL : 0) |
+					   ((GetKeyState(VK_MENU) < 0) ? YW_KEYMOD_ALT : 0) |
+					   ((GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0) ? YW_KEYMOD_SUPER : 0);
+		w->keys.current[key] = pressed ? pressed_data : 0;
 		YwKeyEvent e = {
 			.key = key,
 			.pressed = pressed ? pressed_data : 0,
@@ -1253,6 +1327,8 @@ static bool _YwInit(YwState *s)
 
 YW_EXPORT void YwPollEvents(YwWindowData *w)
 {
+	YW_STATIC_ASSERT(sizeof(w->keys.prev) == sizeof(w->keys.current), "the hell did you do");
+	YwMemcpy(w->keys.prev, w->keys.current, sizeof(w->keys.prev));
 #ifdef YAWL_X11
 	_YwPollEventsX11(w);
 #elif defined(YAWL_WIN32)
