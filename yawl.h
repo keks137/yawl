@@ -123,11 +123,11 @@ typedef enum {
 } YwKey;
 
 enum {
-	YW_KEY_PRESSED = 1,
-	YW_KEYMOD_SHIFT = 2,
-	YW_KEYMOD_CTRL = 4,
-	YW_KEYMOD_ALT = 8,
-	YW_KEYMOD_SUPER = 16,
+	YW_KEY_PRESSED = 1 << 0,
+	YW_KEYMOD_SHIFT = 1 << 1,
+	YW_KEYMOD_CTRL = 1 << 2,
+	YW_KEYMOD_ALT = 1 << 3,
+	YW_KEYMOD_SUPER = 1 << 4,
 };
 typedef uint8_t YwKeyState;
 typedef struct {
@@ -308,8 +308,11 @@ typedef struct {
 #if defined(_MSC_VER)
 #include <malloc.h>
 #define YwAlloca(size) _alloca(size)
-#else //  __GNUC__
+#elif defined(__GNUC__)
 #define YwAlloca(size) __builtin_alloca(size)
+#else
+#include <alloca.h>
+#define YwAlloca(size) alloca(size)
 #endif
 
 YW_EXPORT bool YwInitWindow(YwState *s, YwWindowData *w, const char *name);
@@ -1060,8 +1063,10 @@ static bool _YwInitWindowX11(YwWindowData *w, const char *name)
 		mask,
 		values);
 
-	xcb_intern_atom_cookie_t proto_cookie = s->x.intern_atom(w->conn, 0, 12, "WM_PROTOCOLS");
-	xcb_intern_atom_cookie_t del_cookie = s->x.intern_atom(w->conn, 0, 16, "WM_DELETE_WINDOW");
+	xcb_intern_atom_cookie_t proto_cookie = s->x.intern_atom(w->conn, 0,
+								 sizeof("WM_PROTOCOLS") - 1, "WM_PROTOCOLS");
+	xcb_intern_atom_cookie_t del_cookie = s->x.intern_atom(w->conn, 0,
+							       sizeof("WM_DELETE_WINDOW") - 1, "WM_DELETE_WINDOW");
 	xcb_intern_atom_reply_t *proto_reply = s->x.intern_atom_reply(w->conn, proto_cookie, NULL);
 	xcb_intern_atom_reply_t *del_reply = s->x.intern_atom_reply(w->conn, del_cookie, NULL);
 
@@ -1223,8 +1228,6 @@ static bool _YwWGLLoadExtensions(YwState *s)
 	if (!s->wgl.loaded)
 		return false;
 
-	if (!s->wgl.loaded)
-		return false;
 
 	YW_LOAD_WGL_FUNC(s->wgl.swap_interval, "wglSwapIntervalEXT");
 
@@ -1411,7 +1414,9 @@ static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 
 // Stack alloc or use persistent buffer to avoid malloc per frame
 // For simplicity, stack alloc with max known size (sizeof(RAWINPUT) is ~48 bytes)
+#ifndef YW_RI_STACK_SIZE
 #define YW_RI_STACK_SIZE 64
+#endif // YW_RI_STACK_SIZE
 		YW_STATIC_ASSERT(sizeof(RAWINPUT) <= YW_RI_STACK_SIZE, "RAWINPUT too big for stack");
 		char stack_buf[YW_RI_STACK_SIZE];
 
