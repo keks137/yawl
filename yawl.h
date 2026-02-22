@@ -175,8 +175,11 @@ struct _YwEGLFuncs {
 #endif // YAWL_EGL
 
 #ifdef YAWL_X11
+#include <linux/input-event-codes.h>
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
+#include <xcb/xkb.h>
+#include <X11/XKBlib.h>
 struct _X11Display;
 typedef struct _X11Display X11Display;
 typedef unsigned long X11ID;
@@ -184,6 +187,7 @@ typedef X11ID X11Window;
 
 struct _YwX11Funcs {
 	bool loaded;
+
 	xcb_connection_t *(*connect)(const char *displayname, int *screenp);
 	void (*disconnect)(xcb_connection_t *c);
 	xcb_screen_iterator_t (*setup_roots_iterator)(xcb_setup_t *R);
@@ -270,6 +274,7 @@ typedef struct {
 	EGLSurface egl_surface;
 	EGLContext egl_context;
 	EGLDisplay egl_display;
+	uint8_t tmp_x11_mod_state;
 #endif // YAWL_X11
 #ifdef YAWL_WIN32
 	HWND hwnd;
@@ -371,14 +376,14 @@ YW_EXPORT bool YwKeyDown(YwWindowData *w, YwKey key)
 }
 #ifdef __linux__
 #include <dlfcn.h>
-#define YW_LOAD_SYMBOL(sym, lib, name)                                 \
-	do {                                                           \
-		void *tmp_symbol = dlsym(lib, name);                   \
-		if (tmp_symbol == NULL) {                              \
-			fprintf(stderr, "symbol not found: %s", name); \
-			return false;                                  \
-		}                                                      \
-		*(void **)(&sym) = tmp_symbol;                         \
+#define YW_LOAD_SYMBOL(sym, lib, name)                                   \
+	do {                                                             \
+		void *tmp_symbol = dlsym(lib, name);                     \
+		if (tmp_symbol == NULL) {                                \
+			fprintf(stderr, "symbol not found: %s\n", name); \
+			return false;                                    \
+		}                                                        \
+		*(void **)(&sym) = tmp_symbol;                           \
 	} while (0)
 #endif //__linux__
 #define YW_KEYBUF_PUSH(buf, ev)                                     \
@@ -392,137 +397,6 @@ YW_EXPORT bool YwKeyDown(YwWindowData *w, YwKey key)
 		(buf)->write = _next;                               \
 	} while (0)
 
-static YwKey _YwScancodeToKey(uint16_t scancode)
-{
-	switch (scancode) {
-	// Standard scancodes (no prefix)
-	case 0x001e:
-		return YW_KEY_A;
-	case 0x0030:
-		return YW_KEY_B;
-	case 0x002e:
-		return YW_KEY_C;
-	case 0x0020:
-		return YW_KEY_D;
-	case 0x0012:
-		return YW_KEY_E;
-	case 0x0021:
-		return YW_KEY_F;
-	case 0x0022:
-		return YW_KEY_G;
-	case 0x0023:
-		return YW_KEY_H;
-	case 0x0017:
-		return YW_KEY_I;
-	case 0x0024:
-		return YW_KEY_J;
-	case 0x0025:
-		return YW_KEY_K;
-	case 0x0026:
-		return YW_KEY_L;
-	case 0x0032:
-		return YW_KEY_M;
-	case 0x0031:
-		return YW_KEY_N;
-	case 0x0018:
-		return YW_KEY_O;
-	case 0x0019:
-		return YW_KEY_P;
-	case 0x0010:
-		return YW_KEY_Q;
-	case 0x0013:
-		return YW_KEY_R;
-	case 0x001f:
-		return YW_KEY_S;
-	case 0x0014:
-		return YW_KEY_T;
-	case 0x0016:
-		return YW_KEY_U;
-	case 0x002f:
-		return YW_KEY_V;
-	case 0x0011:
-		return YW_KEY_W;
-	case 0x002d:
-		return YW_KEY_X;
-	case 0x0015:
-		return YW_KEY_Y;
-	case 0x002c:
-		return YW_KEY_Z;
-
-	case 0x000b:
-		return YW_KEY_0;
-	case 0x0002:
-		return YW_KEY_1;
-	case 0x0003:
-		return YW_KEY_2;
-	case 0x0004:
-		return YW_KEY_3;
-	case 0x0005:
-		return YW_KEY_4;
-	case 0x0006:
-		return YW_KEY_5;
-	case 0x0007:
-		return YW_KEY_6;
-	case 0x0008:
-		return YW_KEY_7;
-	case 0x0009:
-		return YW_KEY_8;
-	case 0x000a:
-		return YW_KEY_9;
-
-	case 0x0039:
-		return YW_KEY_SPACE;
-	case 0x001c:
-		return YW_KEY_ENTER;
-	case 0x000f:
-		return YW_KEY_TAB;
-	case 0x0001:
-		return YW_KEY_ESCAPE;
-	case 0x000e:
-		return YW_KEY_BACKSPACE;
-
-	case 0x0048:
-		return YW_KEY_UP; // E0 prefix handled below, this is numpad without numlock
-	case 0x0050:
-		return YW_KEY_DOWN;
-	case 0x004b:
-		return YW_KEY_LEFT;
-	case 0x004d:
-		return YW_KEY_RIGHT;
-
-	case 0x002a:
-		return YW_KEY_LSHIFT;
-	case 0x0036:
-		return YW_KEY_RSHIFT;
-	case 0x001d:
-		return YW_KEY_LCTRL;
-	case 0x0038:
-		return YW_KEY_LALT;
-
-	// Extended scancodes (E0 prefix)
-	case 0xe048:
-		return YW_KEY_UP;
-	case 0xe050:
-		return YW_KEY_DOWN;
-	case 0xe04b:
-		return YW_KEY_LEFT;
-	case 0xe04d:
-		return YW_KEY_RIGHT;
-
-	case 0xe01d:
-		return YW_KEY_RCTRL;
-	case 0xe038:
-		return YW_KEY_RALT;
-	case 0xe05b:
-		return YW_KEY_LSUPER; // Left Windows
-	case 0xe05c:
-		return YW_KEY_RSUPER; // Right Windows
-	case 0xe05d:
-		return YW_KEY_RSUPER; // App/Menu key (map to RSuper or add YW_KEY_MENU)
-	default:
-		return YW_KEY_UNKNOWN;
-	}
-}
 static void _YwUnfocusInputRelease(YwWindowData *w)
 {
 	YwKeyEvent e = { 0 };
@@ -938,112 +812,118 @@ static void _YwPollEventsAndroid(YwWindowData *w)
 #ifdef YAWL_X11
 static YwKey _YwX11KeycodeToKey(uint8_t code)
 {
-	switch (code) {
-	case 38:
+	// Convert X11 keycode to Linux evdev scancode
+	uint16_t scancode = code - 8;
+	switch (scancode) {
+	case KEY_A:
 		return YW_KEY_A;
-	case 56:
+	case KEY_B:
 		return YW_KEY_B;
-	case 54:
+	case KEY_C:
 		return YW_KEY_C;
-	case 40:
+	case KEY_D:
 		return YW_KEY_D;
-	case 26:
+	case KEY_E:
 		return YW_KEY_E;
-	case 41:
+	case KEY_F:
 		return YW_KEY_F;
-	case 42:
+	case KEY_G:
 		return YW_KEY_G;
-	case 43:
+	case KEY_H:
 		return YW_KEY_H;
-	case 31:
+	case KEY_I:
 		return YW_KEY_I;
-	case 44:
+	case KEY_J:
 		return YW_KEY_J;
-	case 45:
+	case KEY_K:
 		return YW_KEY_K;
-	case 46:
+	case KEY_L:
 		return YW_KEY_L;
-	case 58:
+	case KEY_M:
 		return YW_KEY_M;
-	case 57:
+	case KEY_N:
 		return YW_KEY_N;
-	case 32:
+	case KEY_O:
 		return YW_KEY_O;
-	case 33:
+	case KEY_P:
 		return YW_KEY_P;
-	case 24:
+	case KEY_Q:
 		return YW_KEY_Q;
-	case 27:
+	case KEY_R:
 		return YW_KEY_R;
-	case 39:
+	case KEY_S:
 		return YW_KEY_S;
-	case 28:
+	case KEY_T:
 		return YW_KEY_T;
-	case 30:
+	case KEY_U:
 		return YW_KEY_U;
-	case 55:
+	case KEY_V:
 		return YW_KEY_V;
-	case 25:
+	case KEY_W:
 		return YW_KEY_W;
-	case 53:
+	case KEY_X:
 		return YW_KEY_X;
-	case 29:
+	case KEY_Y:
 		return YW_KEY_Y;
-	case 52:
+	case KEY_Z:
 		return YW_KEY_Z;
-	case 19:
+
+	case KEY_0:
 		return YW_KEY_0;
-	case 10:
+	case KEY_1:
 		return YW_KEY_1;
-	case 11:
+	case KEY_2:
 		return YW_KEY_2;
-	case 12:
+	case KEY_3:
 		return YW_KEY_3;
-	case 13:
+	case KEY_4:
 		return YW_KEY_4;
-	case 14:
+	case KEY_5:
 		return YW_KEY_5;
-	case 15:
+	case KEY_6:
 		return YW_KEY_6;
-	case 16:
+	case KEY_7:
 		return YW_KEY_7;
-	case 17:
+	case KEY_8:
 		return YW_KEY_8;
-	case 18:
+	case KEY_9:
 		return YW_KEY_9;
-	case 65:
+
+	case KEY_SPACE:
 		return YW_KEY_SPACE;
-	case 36:
+	case KEY_ENTER:
 		return YW_KEY_ENTER;
-	case 23:
+	case KEY_TAB:
 		return YW_KEY_TAB;
-	case 9:
+	case KEY_ESC:
 		return YW_KEY_ESCAPE;
-	case 22:
+	case KEY_BACKSPACE:
 		return YW_KEY_BACKSPACE;
-	case 111:
+
+	case KEY_UP:
 		return YW_KEY_UP;
-	case 116:
+	case KEY_DOWN:
 		return YW_KEY_DOWN;
-	case 113:
+	case KEY_LEFT:
 		return YW_KEY_LEFT;
-	case 114:
+	case KEY_RIGHT:
 		return YW_KEY_RIGHT;
-	case 50:
+
+	case KEY_LEFTSHIFT:
 		return YW_KEY_LSHIFT;
-	case 62:
+	case KEY_RIGHTSHIFT:
 		return YW_KEY_RSHIFT;
-	case 37:
+	case KEY_LEFTCTRL:
 		return YW_KEY_LCTRL;
-	case 105:
+	case KEY_RIGHTCTRL:
 		return YW_KEY_RCTRL;
-	case 64:
+	case KEY_LEFTALT:
 		return YW_KEY_LALT;
-	case 108:
+	case KEY_RIGHTALT:
 		return YW_KEY_RALT;
-	case 133:
+	case KEY_LEFTMETA:
 		return YW_KEY_LSUPER;
-	case 134:
+	case KEY_RIGHTMETA:
 		return YW_KEY_RSUPER;
 	default:
 		return YW_KEY_UNKNOWN;
@@ -1221,7 +1101,8 @@ static void _YwPollEventsX11(YwWindowData *w)
 	YwState *s = w->state;
 	xcb_generic_event_t *ev;
 	while ((ev = s->x.poll_for_event(w->conn))) {
-		switch (ev->response_type & ~0x80) {
+		uint8_t response_type = ev->response_type & ~0x80;
+		switch (response_type) {
 		case XCB_EXPOSE:
 			break;
 		case XCB_CLIENT_MESSAGE: {
@@ -1249,19 +1130,57 @@ static void _YwPollEventsX11(YwWindowData *w)
 		case XCB_KEY_PRESS:
 		case XCB_KEY_RELEASE: {
 			xcb_key_press_event_t *ke = (xcb_key_press_event_t *)ev;
-			bool pressed = ((ev->response_type & ~0x80) == XCB_KEY_PRESS);
-			YwKeyState pressed_data = 1 | ((ke->state & XCB_MOD_MASK_SHIFT) ? YW_KEYMOD_SHIFT : 0) |
-						  ((ke->state & XCB_MOD_MASK_CONTROL) ? YW_KEYMOD_CTRL : 0) |
-						  ((ke->state & XCB_MOD_MASK_1) ? YW_KEYMOD_ALT : 0) |
-						  ((ke->state & XCB_MOD_MASK_4) ? YW_KEYMOD_SUPER : 0);
+			bool pressed = (response_type == XCB_KEY_PRESS);
 			YwKey key = _YwX11KeycodeToKey(ke->detail);
-			w->keys.current[key] = pressed ? pressed_data : 0;
-			YwKeyEvent e = {
-				.key = key,
-				.pressed = pressed ? pressed_data : 0,
-				// .repeat = false, // X11 detect via XKB if you care
-				// .timestamp = ke->time
-			};
+
+			switch (key) {
+			case YW_KEY_LSHIFT:
+			case YW_KEY_RSHIFT:
+				if (pressed)
+					w->tmp_x11_mod_state |= XCB_MOD_MASK_SHIFT;
+				else
+					w->tmp_x11_mod_state &= ~XCB_MOD_MASK_SHIFT;
+				break;
+			case YW_KEY_LCTRL:
+			case YW_KEY_RCTRL:
+				if (pressed)
+					w->tmp_x11_mod_state |= XCB_MOD_MASK_CONTROL;
+				else
+					w->tmp_x11_mod_state &= ~XCB_MOD_MASK_CONTROL;
+				break;
+			case YW_KEY_LALT:
+			case YW_KEY_RALT:
+				if (pressed)
+					w->tmp_x11_mod_state |= XCB_MOD_MASK_1;
+				else
+					w->tmp_x11_mod_state &= ~XCB_MOD_MASK_1;
+				break;
+			case YW_KEY_LSUPER:
+			case YW_KEY_RSUPER:
+				if (pressed)
+					w->tmp_x11_mod_state |= XCB_MOD_MASK_4;
+				else
+					w->tmp_x11_mod_state &= ~XCB_MOD_MASK_4;
+				break;
+			default:
+				break;
+			}
+
+			YwKeyState pressed_data = 0;
+			if (pressed) {
+				pressed_data = YW_KEY_PRESSED;
+				if (w->tmp_x11_mod_state & XCB_MOD_MASK_SHIFT)
+					pressed_data |= YW_KEYMOD_SHIFT;
+				if (w->tmp_x11_mod_state & XCB_MOD_MASK_CONTROL)
+					pressed_data |= YW_KEYMOD_CTRL;
+				if (w->tmp_x11_mod_state & XCB_MOD_MASK_1)
+					pressed_data |= YW_KEYMOD_ALT;
+				if (w->tmp_x11_mod_state & XCB_MOD_MASK_4)
+					pressed_data |= YW_KEYMOD_SUPER;
+			}
+
+			w->keys.current[key] = pressed_data;
+			YwKeyEvent e = { .key = key, .pressed = pressed_data };
 			YW_KEYBUF_PUSH(&w->key_buf, e);
 			break;
 		}
@@ -1312,6 +1231,137 @@ static bool _YwWGLLoadExtensions(YwState *s)
 	s->wgl.ext_loaded = true;
 	return true;
 }
+static YwKey _YwScancodeToKey(uint16_t scancode)
+{
+	switch (scancode) {
+	// Standard scancodes (no prefix)
+	case 0x001e:
+		return YW_KEY_A;
+	case 0x0030:
+		return YW_KEY_B;
+	case 0x002e:
+		return YW_KEY_C;
+	case 0x0020:
+		return YW_KEY_D;
+	case 0x0012:
+		return YW_KEY_E;
+	case 0x0021:
+		return YW_KEY_F;
+	case 0x0022:
+		return YW_KEY_G;
+	case 0x0023:
+		return YW_KEY_H;
+	case 0x0017:
+		return YW_KEY_I;
+	case 0x0024:
+		return YW_KEY_J;
+	case 0x0025:
+		return YW_KEY_K;
+	case 0x0026:
+		return YW_KEY_L;
+	case 0x0032:
+		return YW_KEY_M;
+	case 0x0031:
+		return YW_KEY_N;
+	case 0x0018:
+		return YW_KEY_O;
+	case 0x0019:
+		return YW_KEY_P;
+	case 0x0010:
+		return YW_KEY_Q;
+	case 0x0013:
+		return YW_KEY_R;
+	case 0x001f:
+		return YW_KEY_S;
+	case 0x0014:
+		return YW_KEY_T;
+	case 0x0016:
+		return YW_KEY_U;
+	case 0x002f:
+		return YW_KEY_V;
+	case 0x0011:
+		return YW_KEY_W;
+	case 0x002d:
+		return YW_KEY_X;
+	case 0x0015:
+		return YW_KEY_Y;
+	case 0x002c:
+		return YW_KEY_Z;
+
+	case 0x000b:
+		return YW_KEY_0;
+	case 0x0002:
+		return YW_KEY_1;
+	case 0x0003:
+		return YW_KEY_2;
+	case 0x0004:
+		return YW_KEY_3;
+	case 0x0005:
+		return YW_KEY_4;
+	case 0x0006:
+		return YW_KEY_5;
+	case 0x0007:
+		return YW_KEY_6;
+	case 0x0008:
+		return YW_KEY_7;
+	case 0x0009:
+		return YW_KEY_8;
+	case 0x000a:
+		return YW_KEY_9;
+
+	case 0x0039:
+		return YW_KEY_SPACE;
+	case 0x001c:
+		return YW_KEY_ENTER;
+	case 0x000f:
+		return YW_KEY_TAB;
+	case 0x0001:
+		return YW_KEY_ESCAPE;
+	case 0x000e:
+		return YW_KEY_BACKSPACE;
+
+	case 0x0048:
+		return YW_KEY_UP; // E0 prefix handled below, this is numpad without numlock
+	case 0x0050:
+		return YW_KEY_DOWN;
+	case 0x004b:
+		return YW_KEY_LEFT;
+	case 0x004d:
+		return YW_KEY_RIGHT;
+
+	case 0x002a:
+		return YW_KEY_LSHIFT;
+	case 0x0036:
+		return YW_KEY_RSHIFT;
+	case 0x001d:
+		return YW_KEY_LCTRL;
+	case 0x0038:
+		return YW_KEY_LALT;
+
+	// Extended scancodes (E0 prefix)
+	case 0xe048:
+		return YW_KEY_UP;
+	case 0xe050:
+		return YW_KEY_DOWN;
+	case 0xe04b:
+		return YW_KEY_LEFT;
+	case 0xe04d:
+		return YW_KEY_RIGHT;
+
+	case 0xe01d:
+		return YW_KEY_RCTRL;
+	case 0xe038:
+		return YW_KEY_RALT;
+	case 0xe05b:
+		return YW_KEY_LSUPER; // Left Windows
+	case 0xe05c:
+		return YW_KEY_RSUPER; // Right Windows
+	case 0xe05d:
+		return YW_KEY_RSUPER; // App/Menu key (map to RSuper or add YW_KEY_MENU)
+	default:
+		return YW_KEY_UNKNOWN;
+	}
+}
 static bool _YwWGLLoad(YwState *s)
 {
 	if (!s->opengl32) {
@@ -1329,7 +1379,6 @@ static bool _YwWGLLoad(YwState *s)
 	s->wgl.loaded = true;
 	return true;
 }
-
 
 static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
