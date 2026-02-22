@@ -136,7 +136,7 @@ typedef struct {
 } YwKeyEvent;
 
 #ifndef YW_KEYBUF_SIZE
-#define YW_KEYBUF_SIZE 64
+#define YW_KEYBUF_SIZE YW_KEY_COUNT
 #endif //YW_KEYBUF_SIZE
 
 struct YwKeyBuffer {
@@ -261,6 +261,7 @@ typedef struct {
 	struct YwKeyBuffer key_buf;
 	YwState *state;
 	YwKeysState keys;
+	bool focused;
 
 #ifdef YAWL_X11
 	xcb_connection_t *conn;
@@ -390,6 +391,18 @@ YW_EXPORT bool YwKeyDown(YwWindowData *w, YwKey key)
 		(buf)->events[(buf)->write] = (ev);                 \
 		(buf)->write = _next;                               \
 	} while (0)
+
+static void _YwUnfocusInputRelease(YwWindowData *w)
+{
+	YwKeyEvent e = { 0 };
+	for (size_t i = 0; i < sizeof(w->keys.current); i++) {
+		if (w->keys.current[i]) {
+			e.key = i;
+			YW_KEYBUF_PUSH(&w->key_buf, e);
+			w->keys.current[i] = 0;
+		}
+	}
+}
 
 #ifdef YAWL_EGL
 static bool _YwEGLLoad(YwState *s)
@@ -584,8 +597,18 @@ static void _YwAndroidOnStop(ANativeActivity *activity)
 
 static void _YwAndroidOnWindowFocusChanged(ANativeActivity *activity, int focused)
 {
-	(void)activity;
-	(void)focused;
+	YwWindowData *w = (YwWindowData *)activity->instance;
+	if (w) {
+		if (focused) {
+			w->focused = true;
+
+		} else {
+#ifndef YAWL_NO_UNFOCUS_INPUT_RELEASE
+			_YwUnfocusInputRelease(w);
+#endif // YAWL_NO_UNFOCUS_INPUT_RELEASE
+			w->focused = false;
+		}
+	}
 }
 
 static void _YwAndroidOnNativeWindowCreated(ANativeActivity *activity, ANativeWindow *window)
@@ -1009,7 +1032,7 @@ static bool _YwInitWindowX11(YwWindowData *w, const char *name)
 	uint32_t mask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
 	uint32_t values[2] = {
 		w->screen->black_pixel,
-		XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE | XCB_EVENT_MASK_STRUCTURE_NOTIFY
+		XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE | XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_FOCUS_CHANGE
 	};
 
 	s->x.create_window(
@@ -1083,6 +1106,15 @@ static void _YwPollEventsX11(YwWindowData *w)
 			w->height = cn->height;
 			break;
 		}
+		case XCB_FOCUS_IN:
+			w->focused = true;
+			break;
+		case XCB_FOCUS_OUT: {
+#ifndef YAWL_NO_UNFOCUS_INPUT_RELEASE
+			_YwUnfocusInputRelease(w);
+#endif // YAWL_NO_UNFOCUS_INPUT_RELEASE
+			w->focused = false;
+		} break;
 		case XCB_KEY_PRESS:
 		case XCB_KEY_RELEASE: {
 			xcb_key_press_event_t *ke = (xcb_key_press_event_t *)ev;
@@ -1242,9 +1274,9 @@ static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 		YwKey key = _YwVKToKey((int)wparam);
 		bool pressed = (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
 		YwKeyState pressed_data = pressed | ((GetKeyState(VK_SHIFT) < 0) ? YW_KEYMOD_SHIFT : 0) |
-					   ((GetKeyState(VK_CONTROL) < 0) ? YW_KEYMOD_CTRL : 0) |
-					   ((GetKeyState(VK_MENU) < 0) ? YW_KEYMOD_ALT : 0) |
-					   ((GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0) ? YW_KEYMOD_SUPER : 0);
+					  ((GetKeyState(VK_CONTROL) < 0) ? YW_KEYMOD_CTRL : 0) |
+					  ((GetKeyState(VK_MENU) < 0) ? YW_KEYMOD_ALT : 0) |
+					  ((GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0) ? YW_KEYMOD_SUPER : 0);
 		w->keys.current[key] = pressed ? pressed_data : 0;
 		YwKeyEvent e = {
 			.key = key,
@@ -1253,6 +1285,19 @@ static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 		YW_KEYBUF_PUSH(&w->key_buf, e);
 		return 0;
 	}
+	case WM_SETFOCUS:
+		if (w)
+			w->focused = true;
+		return 0;
+	case WM_KILLFOCUS: {
+		if (w) {
+#ifndef YAWL_NO_UNFOCUS_INPUT_RELEASE
+			_YwUnfocusInputRelease(w);
+#endif // YAWL_NO_UNFOCUS_INPUT_RELEASE
+			w->focused = false;
+		}
+	}
+		return 0;
 	}
 	return DefWindowProcA(hwnd, msg, wparam, lparam);
 }
