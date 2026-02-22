@@ -392,6 +392,137 @@ YW_EXPORT bool YwKeyDown(YwWindowData *w, YwKey key)
 		(buf)->write = _next;                               \
 	} while (0)
 
+static YwKey _YwScancodeToKey(uint16_t scancode)
+{
+	switch (scancode) {
+	// Standard scancodes (no prefix)
+	case 0x001e:
+		return YW_KEY_A;
+	case 0x0030:
+		return YW_KEY_B;
+	case 0x002e:
+		return YW_KEY_C;
+	case 0x0020:
+		return YW_KEY_D;
+	case 0x0012:
+		return YW_KEY_E;
+	case 0x0021:
+		return YW_KEY_F;
+	case 0x0022:
+		return YW_KEY_G;
+	case 0x0023:
+		return YW_KEY_H;
+	case 0x0017:
+		return YW_KEY_I;
+	case 0x0024:
+		return YW_KEY_J;
+	case 0x0025:
+		return YW_KEY_K;
+	case 0x0026:
+		return YW_KEY_L;
+	case 0x0032:
+		return YW_KEY_M;
+	case 0x0031:
+		return YW_KEY_N;
+	case 0x0018:
+		return YW_KEY_O;
+	case 0x0019:
+		return YW_KEY_P;
+	case 0x0010:
+		return YW_KEY_Q;
+	case 0x0013:
+		return YW_KEY_R;
+	case 0x001f:
+		return YW_KEY_S;
+	case 0x0014:
+		return YW_KEY_T;
+	case 0x0016:
+		return YW_KEY_U;
+	case 0x002f:
+		return YW_KEY_V;
+	case 0x0011:
+		return YW_KEY_W;
+	case 0x002d:
+		return YW_KEY_X;
+	case 0x0015:
+		return YW_KEY_Y;
+	case 0x002c:
+		return YW_KEY_Z;
+
+	case 0x000b:
+		return YW_KEY_0;
+	case 0x0002:
+		return YW_KEY_1;
+	case 0x0003:
+		return YW_KEY_2;
+	case 0x0004:
+		return YW_KEY_3;
+	case 0x0005:
+		return YW_KEY_4;
+	case 0x0006:
+		return YW_KEY_5;
+	case 0x0007:
+		return YW_KEY_6;
+	case 0x0008:
+		return YW_KEY_7;
+	case 0x0009:
+		return YW_KEY_8;
+	case 0x000a:
+		return YW_KEY_9;
+
+	case 0x0039:
+		return YW_KEY_SPACE;
+	case 0x001c:
+		return YW_KEY_ENTER;
+	case 0x000f:
+		return YW_KEY_TAB;
+	case 0x0001:
+		return YW_KEY_ESCAPE;
+	case 0x000e:
+		return YW_KEY_BACKSPACE;
+
+	case 0x0048:
+		return YW_KEY_UP; // E0 prefix handled below, this is numpad without numlock
+	case 0x0050:
+		return YW_KEY_DOWN;
+	case 0x004b:
+		return YW_KEY_LEFT;
+	case 0x004d:
+		return YW_KEY_RIGHT;
+
+	case 0x002a:
+		return YW_KEY_LSHIFT;
+	case 0x0036:
+		return YW_KEY_RSHIFT;
+	case 0x001d:
+		return YW_KEY_LCTRL;
+	case 0x0038:
+		return YW_KEY_LALT;
+
+	// Extended scancodes (E0 prefix)
+	case 0xe048:
+		return YW_KEY_UP;
+	case 0xe050:
+		return YW_KEY_DOWN;
+	case 0xe04b:
+		return YW_KEY_LEFT;
+	case 0xe04d:
+		return YW_KEY_RIGHT;
+
+	case 0xe01d:
+		return YW_KEY_RCTRL;
+	case 0xe038:
+		return YW_KEY_RALT;
+	case 0xe05b:
+		return YW_KEY_LSUPER; // Left Windows
+	case 0xe05c:
+		return YW_KEY_RSUPER; // Right Windows
+	case 0xe05d:
+		return YW_KEY_RSUPER; // App/Menu key (map to RSuper or add YW_KEY_MENU)
+	default:
+		return YW_KEY_UNKNOWN;
+	}
+}
 static void _YwUnfocusInputRelease(YwWindowData *w)
 {
 	YwKeyEvent e = { 0 };
@@ -1199,51 +1330,7 @@ static bool _YwWGLLoad(YwState *s)
 	return true;
 }
 
-static YwKey _YwVKToKey(int vk)
-{
-	if (vk >= 'A' && vk <= 'Z')
-		return YW_KEY_A + (vk - 'A');
-	if (vk >= '0' && vk <= '9')
-		return YW_KEY_0 + (vk - '0');
-	switch (vk) {
-	case VK_SPACE:
-		return YW_KEY_SPACE;
-	case VK_RETURN:
-		return YW_KEY_ENTER;
-	case VK_TAB:
-		return YW_KEY_TAB;
-	case VK_ESCAPE:
-		return YW_KEY_ESCAPE;
-	case VK_BACK:
-		return YW_KEY_BACKSPACE;
-	case VK_UP:
-		return YW_KEY_UP;
-	case VK_DOWN:
-		return YW_KEY_DOWN;
-	case VK_LEFT:
-		return YW_KEY_LEFT;
-	case VK_RIGHT:
-		return YW_KEY_RIGHT;
-	case VK_LSHIFT:
-		return YW_KEY_LSHIFT;
-	case VK_RSHIFT:
-		return YW_KEY_RSHIFT;
-	case VK_LCONTROL:
-		return YW_KEY_LCTRL;
-	case VK_RCONTROL:
-		return YW_KEY_RCTRL;
-	case VK_LMENU:
-		return YW_KEY_LALT;
-	case VK_RMENU:
-		return YW_KEY_RALT;
-	case VK_LWIN:
-		return YW_KEY_LSUPER;
-	case VK_RWIN:
-		return YW_KEY_RSUPER;
-	default:
-		return YW_KEY_UNKNOWN;
-	}
-}
+
 static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
 	YwWindowData *w = (YwWindowData *)GetWindowLongPtrA(hwnd, GWLP_USERDATA);
@@ -1265,25 +1352,107 @@ static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 			w->height = HIWORD(lparam);
 		}
 		return 0;
-	case WM_KEYDOWN:
-	case WM_KEYUP:
-	case WM_SYSKEYDOWN:
-	case WM_SYSKEYUP: {
+	case WM_INPUT: {
 		if (!w)
 			return 0;
-		YwKey key = _YwVKToKey((int)wparam);
-		bool pressed = (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
-		YwKeyState pressed_data = pressed | ((GetKeyState(VK_SHIFT) < 0) ? YW_KEYMOD_SHIFT : 0) |
-					  ((GetKeyState(VK_CONTROL) < 0) ? YW_KEYMOD_CTRL : 0) |
-					  ((GetKeyState(VK_MENU) < 0) ? YW_KEYMOD_ALT : 0) |
-					  ((GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0) ? YW_KEYMOD_SUPER : 0);
-		w->keys.current[key] = pressed ? pressed_data : 0;
+
+		UINT size = 0;
+		// First call gets required size
+		GetRawInputData((HRAWINPUT)lparam, RID_INPUT, NULL, &size, sizeof(RAWINPUTHEADER));
+
+// Stack alloc or use persistent buffer to avoid malloc per frame
+// For simplicity, stack alloc with max known size (sizeof(RAWINPUT) is ~48 bytes)
+#define YW_RI_STACK_SIZE 64
+		YW_STATIC_ASSERT(sizeof(RAWINPUT) <= YW_RI_STACK_SIZE, "RAWINPUT too big for stack");
+		char stack_buf[YW_RI_STACK_SIZE];
+
+		if (GetRawInputData((HRAWINPUT)lparam, RID_INPUT, stack_buf, &size, sizeof(RAWINPUTHEADER)) != size) {
+			return 0;
+		}
+
+		RAWINPUT *ri = (RAWINPUT *)stack_buf;
+		if (ri->header.dwType != RIM_TYPEKEYBOARD)
+			return 0; // Not keyboard input
+
+		RAWKEYBOARD *rk = &ri->data.keyboard;
+
+		// Flags analysis
+		bool is_e0 = (rk->Flags & RI_KEY_E0) != 0; // Extended key (right modifiers, arrows, numpad)
+		bool is_e1 = (rk->Flags & RI_KEY_E1) != 0; // Extended key 1 (Pause/Break only)
+		bool make = (rk->Flags & RI_KEY_BREAK) == 0; // Key press (not release)
+		// bool was_down = (rk->Flags & RI_KEY_MAKE) == 0; // Only valid for some keyboards
+
+		// Build scancode: standard (8-bit) or extended (0xe0 prefix)
+		uint16_t scancode = rk->MakeCode;
+		if (is_e0)
+			scancode |= 0xe000;
+		if (is_e1)
+			scancode |= 0xe100; // Pause key
+
+		// Map to your key enum using scancode tables (not VK)
+		YwKey key = _YwScancodeToKey(scancode);
+
+		// Get current modifier state from our own tracking (not GetKeyState)
+		// We track these ourselves to avoid querying Windows
+		bool shift_down = w->keys.current[YW_KEY_LSHIFT] || w->keys.current[YW_KEY_RSHIFT];
+		bool ctrl_down = w->keys.current[YW_KEY_LCTRL] || w->keys.current[YW_KEY_RCTRL];
+		bool alt_down = w->keys.current[YW_KEY_LALT] || w->keys.current[YW_KEY_RALT];
+		bool win_down = w->keys.current[YW_KEY_LSUPER] || w->keys.current[YW_KEY_RSUPER];
+
+		// Update modifier tracking for this specific key
+		switch (key) {
+		case YW_KEY_LSHIFT:
+			shift_down = make;
+			break;
+		case YW_KEY_RSHIFT:
+			shift_down = make;
+			break;
+		case YW_KEY_LCTRL:
+			ctrl_down = make;
+			break;
+		case YW_KEY_RCTRL:
+			ctrl_down = make;
+			break;
+		case YW_KEY_LALT:
+			alt_down = make;
+			break;
+		case YW_KEY_RALT:
+			alt_down = make;
+			break;
+		case YW_KEY_LSUPER:
+			win_down = make;
+			break;
+		case YW_KEY_RSUPER:
+			win_down = make;
+			break;
+		default:
+			break;
+		}
+
+		// Build state
+		YwKeyState pressed_data = 0;
+		if (make) {
+			pressed_data = YW_KEY_PRESSED;
+			if (shift_down)
+				pressed_data |= YW_KEYMOD_SHIFT;
+			if (ctrl_down)
+				pressed_data |= YW_KEYMOD_CTRL;
+			if (alt_down)
+				pressed_data |= YW_KEYMOD_ALT;
+			if (win_down)
+				pressed_data |= YW_KEYMOD_SUPER;
+		}
+
+		w->keys.current[key] = pressed_data;
+
 		YwKeyEvent e = {
 			.key = key,
-			.pressed = pressed ? pressed_data : 0,
+			.pressed = pressed_data,
 		};
 		YW_KEYBUF_PUSH(&w->key_buf, e);
-		return 0;
+
+		// DefWindowProc not needed for WM_INPUT if NOLEGACY, but call anyway for cleanliness
+		return DefWindowProcA(hwnd, msg, wparam, lparam);
 	}
 	case WM_SETFOCUS:
 		if (w)
@@ -1301,6 +1470,7 @@ static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 	}
 	return DefWindowProcA(hwnd, msg, wparam, lparam);
 }
+#include <hidusage.h>
 static bool _YwInitWindowWin32(YwWindowData *w, const char *name)
 {
 	YwState *s = w->state;
@@ -1322,6 +1492,16 @@ static bool _YwInitWindowWin32(YwWindowData *w, const char *name)
 
 	if (!w->hwnd)
 		return false;
+	RAWINPUTDEVICE rid = { 0 };
+	rid.usUsagePage = HID_USAGE_PAGE_GENERIC;
+	rid.usUsage = HID_USAGE_GENERIC_KEYBOARD;
+	rid.dwFlags = RIDEV_NOLEGACY; // No WM_KEY* messages, no hotkeys, no key repeat
+	rid.hwndTarget = w->hwnd;
+
+	if (!RegisterRawInputDevices(&rid, 1, sizeof(rid))) {
+		fprintf(stderr, "Failed to register raw input\n");
+		return false;
+	}
 
 	ShowWindow(w->hwnd, SW_SHOW);
 	UpdateWindow(w->hwnd);
