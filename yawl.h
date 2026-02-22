@@ -110,11 +110,17 @@ typedef enum {
 	YW_KEY_FRAME_END, // control character for macros
 	YW_KEY_COUNT,
 } YwKey;
+
+enum {
+	YW_KEY_PRESSED = 1,
+	YW_KEYMOD_SHIFT = 2,
+	YW_KEYMOD_CTRL = 4,
+	YW_KEYMOD_ALT = 8,
+	YW_KEYMOD_SUPER = 16,
+};
 typedef struct {
 	YwKey key;
-	bool pressed;
-	bool repeat;
-	uint8_t mods; // bitmask: 1=shift, 2=ctrl, 4=alt, 8=super
+	uint8_t pressed; // bitmask: 1=pressed + mods: 2=shift, 4=ctrl, 8=alt, 16=super
 } YwKeyEvent;
 
 #ifndef YW_KEYBUF_SIZE
@@ -302,7 +308,7 @@ YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindowData *w, ANativeActivity
 			fprintf(stderr, "symbol not found: %s", name); \
 			return false;                                  \
 		}                                                      \
-		sym = tmp_symbol;                                      \
+		*(void **)(&sym) = tmp_symbol;                         \
 	} while (0)
 #endif //__linux__
 #define YW_KEYBUF_PUSH(buf, ev)                                     \
@@ -682,18 +688,18 @@ static void _YwPollEventsAndroid(YwWindowData *w)
 			if (type == AINPUT_EVENT_TYPE_KEY) {
 				int32_t action = AKeyEvent_getAction(event);
 				int32_t keycode = AKeyEvent_getKeyCode(event);
-				int32_t repeat = AKeyEvent_getRepeatCount(event);
+				// int32_t repeat = AKeyEvent_getRepeatCount(event);
 				int32_t meta = AKeyEvent_getMetaState(event);
 				bool pressed = (action == AKEY_EVENT_ACTION_DOWN);
+				uint8_t pressed_data = pressed | ((meta & AMETA_SHIFT_ON) ? YW_KEYMOD_SHIFT : 0) |
+						       ((meta & AMETA_CTRL_ON) ? YW_KEYMOD_CTRL : 0) |
+						       ((meta & AMETA_ALT_ON) ? YW_KEYMOD_ALT : 0) |
+						       ((meta & AMETA_META_ON) ? YW_KEYMOD_SUPER : 0);
 
 				YwKeyEvent e = {
 					.key = _YwAndroidKeycodeToKey(keycode),
-					.pressed = pressed,
-					.repeat = (repeat > 0),
-					.mods = ((meta & AMETA_SHIFT_ON) ? 1 : 0) |
-						((meta & AMETA_CTRL_ON) ? 2 : 0) |
-						((meta & AMETA_ALT_ON) ? 4 : 0) |
-						((meta & AMETA_META_ON) ? 8 : 0),
+					.pressed = pressed ? pressed_data : 0,
+					// .repeat = (repeat > 0),
 				};
 				YW_KEYBUF_PUSH(&w->key_buf, e);
 			}
@@ -703,6 +709,7 @@ static void _YwPollEventsAndroid(YwWindowData *w)
 	}
 }
 #endif //YAWL_ANDROID //YAWL_ANDROID
+
 #ifdef YAWL_X11
 static YwKey _YwX11KeycodeToKey(uint8_t code)
 {
@@ -1008,14 +1015,15 @@ static void _YwPollEventsX11(YwWindowData *w)
 		case XCB_KEY_PRESS:
 		case XCB_KEY_RELEASE: {
 			xcb_key_press_event_t *ke = (xcb_key_press_event_t *)ev;
+			bool pressed = ((ev->response_type & ~0x80) == XCB_KEY_PRESS);
+			uint8_t pressed_data = 1 | ((ke->state & XCB_MOD_MASK_SHIFT) ? YW_KEYMOD_SHIFT : 0) |
+					       ((ke->state & XCB_MOD_MASK_CONTROL) ? YW_KEYMOD_CTRL : 0) |
+					       ((ke->state & XCB_MOD_MASK_1) ? YW_KEYMOD_ALT : 0) |
+					       ((ke->state & XCB_MOD_MASK_4) ? YW_KEYMOD_SUPER : 0);
 			YwKeyEvent e = {
 				.key = _YwX11KeycodeToKey(ke->detail),
-				.pressed = (ev->response_type & ~0x80) == XCB_KEY_PRESS,
-				.repeat = false, // X11 detect via XKB if you care
-				.mods = ((ke->state & XCB_MOD_MASK_SHIFT) ? 1 : 0) |
-					((ke->state & XCB_MOD_MASK_CONTROL) ? 2 : 0) |
-					((ke->state & XCB_MOD_MASK_1) ? 4 : 0) |
-					((ke->state & XCB_MOD_MASK_4) ? 8 : 0),
+				.pressed = pressed ? pressed_data : 0,
+				// .repeat = false, // X11 detect via XKB if you care
 				// .timestamp = ke->time
 			};
 			YW_KEYBUF_PUSH(&w->key_buf, e);
@@ -1026,6 +1034,7 @@ static void _YwPollEventsX11(YwWindowData *w)
 	}
 }
 #endif // YAWL_X11
+
 #if defined(YAWL_WIN32)
 #define YW_LOAD_SYMBOL(sym, lib, name)                                   \
 	do {                                                             \
@@ -1034,22 +1043,37 @@ static void _YwPollEventsX11(YwWindowData *w)
 			fprintf(stderr, "symbol not found: %s\n", name); \
 			return false;                                    \
 		}                                                        \
-		sym = (void *)tmp;                                       \
+		*(void **)(&sym) = (void *)(uintptr_t)tmp;               \
 	} while (0)
 
+static bool _YwLoadGLProcWin32(YwState *s, void **proc, const char *name)
+{
+	void *p = (void *)(uintptr_t)s->wgl.get_proc_address(name);
+	if (!p)
+		p = (void *)(uintptr_t)(FARPROC)GetProcAddress(s->opengl32, name);
+	*proc = p;
+	return p != NULL;
+}
+#define YW_LOAD_WGL_FUNC(sym, name)                                          \
+	do {                                                                 \
+		void *_p = (void *)(uintptr_t)s->wgl.get_proc_address(name); \
+		if (!_p) {                                                   \
+			fprintf(stderr, "%s not available\n", name);         \
+			return false;                                        \
+		}                                                            \
+		*(void **)(&sym) = _p;                                       \
+	} while (0)
 static bool _YwWGLLoadExtensions(YwState *s)
 {
 	if (!s->wgl.loaded)
 		return false;
 
-	void *p = (void *)s->wgl.get_proc_address("wglSwapIntervalEXT");
-	if (!p) {
-		fprintf(stderr, "wglSwapIntervalEXT not available\n");
+	if (!s->wgl.loaded)
 		return false;
-	}
-	s->wgl.swap_interval = (BOOL(WINAPI *)(int))p;
-	s->wgl.ext_loaded = true;
 
+	YW_LOAD_WGL_FUNC(s->wgl.swap_interval, "wglSwapIntervalEXT");
+
+	s->wgl.ext_loaded = true;
 	return true;
 }
 static bool _YwWGLLoad(YwState *s)
@@ -1142,16 +1166,15 @@ static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 	case WM_SYSKEYUP: {
 		if (!w)
 			return 0;
+		YwKey key = _YwVKToKey((int)wparam);
 		bool pressed = (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
+		uint8_t pressed_data = pressed | ((GetKeyState(VK_SHIFT) < 0) ? YW_KEYMOD_SHIFT : 0) |
+				       ((GetKeyState(VK_CONTROL) < 0) ? YW_KEYMOD_CTRL : 0) |
+				       ((GetKeyState(VK_MENU) < 0) ? YW_KEYMOD_ALT : 0) |
+				       ((GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0) ? YW_KEYMOD_SUPER : 0);
 		YwKeyEvent e = {
-			.key = _YwVKToKey((int)wparam),
-			.pressed = pressed,
-			.repeat = pressed && (lparam & (1 << 30)), // bit 30 = prev state
-			.mods = ((GetKeyState(VK_SHIFT) < 0) ? 1 : 0) |
-				((GetKeyState(VK_CONTROL) < 0) ? 2 : 0) |
-				((GetKeyState(VK_MENU) < 0) ? 4 : 0) |
-				((GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0) ? 8 : 0),
-			// .timestamp = GetMessageTime()
+			.key = key,
+			.pressed = pressed ? pressed_data : 0,
 		};
 		YW_KEYBUF_PUSH(&w->key_buf, e);
 		return 0;
@@ -1220,15 +1243,6 @@ static void _YwPollEventsWin32(YwWindowData *w)
 		DispatchMessageA(&msg);
 	}
 }
-
-static bool _YwLoadGLProcWin32(YwState *s, void **proc, const char *name)
-{
-	void *p = (void *)s->wgl.get_proc_address(name);
-	if (!p)
-		p = (void *)GetProcAddress(s->opengl32, name);
-	*proc = p;
-	return p != NULL;
-}
 #endif //YAWL_WIN32
 
 static bool _YwInit(YwState *s)
@@ -1293,6 +1307,7 @@ YW_EXPORT void YwEndDrawing(YwWindowData *w)
 #ifdef YAWL_EGL
 	s->e.swap_buffers(w->egl_display, w->egl_surface);
 #elif defined(YAWL_WIN32)
+	(void)s;
 	SwapBuffers(w->hdc);
 #else
 #warning Unsupported platform

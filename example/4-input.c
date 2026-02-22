@@ -6,10 +6,10 @@
 #define key_pressed(k) (!key_prev[k].pressed && key_current[k].pressed)
 #define key_released(k) (key_prev[k].pressed && !key_current[k].pressed)
 #define key_held(k) (key_current[k].pressed)
-#define key_mod_ctl(k) ((key_current[k].mods & 2) >> 1)
-#define key_mod_alt(k) ((key_current[k].mods & 4) >> 2)
-#define key_mod_super(k) ((key_current[k].mods & 8) >> 3)
-#define key_mod_shift(k) ((key_current[k].mods & 1))
+#define key_mod_ctl(k) ((key_current[k].pressed & YW_KEYMOD_CTRL))
+#define key_mod_alt(k) ((key_current[k].pressed & YW_KEYMOD_ALT))
+#define key_mod_super(k) ((key_current[k].pressed & YW_KEYMOD_SUPER))
+#define key_mod_shift(k) ((key_current[k].pressed & YW_KEYMOD_SHIFT))
 
 int main()
 {
