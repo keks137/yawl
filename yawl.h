@@ -262,6 +262,7 @@ typedef struct {
 	size_t width;
 	size_t height;
 	bool should_close;
+	bool resized;
 	struct YwKeyBuffer key_buf;
 	YwState *state;
 	YwKeysState keys;
@@ -271,9 +272,7 @@ typedef struct {
 	xcb_connection_t *conn;
 	xcb_window_t win;
 	xcb_screen_t *screen;
-	EGLSurface egl_surface;
-	EGLContext egl_context;
-	EGLDisplay egl_display;
+
 	uint8_t tmp_x11_mod_state;
 #endif // YAWL_X11
 #ifdef YAWL_WIN32
@@ -283,10 +282,6 @@ typedef struct {
 #endif // YAWL_WIN32
 #ifdef YAWL_ANDROID
 	ANativeWindow *native_window;
-	EGLSurface egl_surface;
-	EGLContext egl_context;
-	EGLDisplay egl_display;
-	EGLConfig egl_config;
 	bool egl_context_bound;
 	ANativeActivity *activity;
 	AInputQueue *input_queue;
@@ -296,6 +291,12 @@ typedef struct {
 	bool window_ready;
 
 #endif // YAWL_ANDROID
+#ifdef YAWL_EGL
+	EGLSurface egl_surface;
+	EGLContext egl_context;
+	EGLConfig egl_config;
+	EGLDisplay egl_display;
+#endif // YAWL_EGL
 } YwWindowData;
 #include <string.h>
 #ifndef YwMemset
@@ -1000,14 +1001,13 @@ static bool _YwEGLCreateContextX11(YwState *s, YwWindowData *w)
 		EGL_NONE
 	};
 
-	EGLConfig config;
 	EGLint num_configs;
-	if (!s->e.choose_config(w->egl_display, attribs, &config, 1, &num_configs) || num_configs < 1) {
+	if (!s->e.choose_config(w->egl_display, attribs, &w->egl_config, 1, &num_configs) || num_configs < 1) {
 		fprintf(stderr, "No EGL config found\n");
 		return false;
 	}
 
-	w->egl_surface = s->e.create_window_surface(w->egl_display, config, w->win, NULL);
+	w->egl_surface = s->e.create_window_surface(w->egl_display, w->egl_config, w->win, NULL);
 	if (w->egl_surface == EGL_NO_SURFACE) {
 		EGLint err = s->e.get_error();
 		fprintf(stderr, "eglCreateWindowSurface failed: 0x%x (%d)\n", err, err);
@@ -1015,7 +1015,7 @@ static bool _YwEGLCreateContextX11(YwState *s, YwWindowData *w)
 	}
 
 	EGLint ctx_attribs[] = { EGL_NONE };
-	w->egl_context = s->e.create_context(w->egl_display, config, EGL_NO_CONTEXT, ctx_attribs);
+	w->egl_context = s->e.create_context(w->egl_display, w->egl_config, EGL_NO_CONTEXT, ctx_attribs);
 	if (w->egl_context == EGL_NO_CONTEXT)
 		return false;
 
@@ -1119,10 +1119,26 @@ static void _YwPollEventsX11(YwWindowData *w)
 		}
 		case XCB_CONFIGURE_NOTIFY: {
 			xcb_configure_notify_event_t *cn = (xcb_configure_notify_event_t *)ev;
-			w->width = cn->width;
-			w->height = cn->height;
-			break;
-		}
+			uint16_t new_width = cn->width;
+			uint16_t new_height = cn->height;
+			if (new_width != w->width || new_height != w->height) {
+				w->resized = true;
+				w->width = new_width;
+				w->height = new_height;
+#ifdef YAWL_EGL
+				if (w->egl_surface != EGL_NO_SURFACE) {
+					s->e.make_current(w->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+					s->e.destroy_surface(w->egl_display, w->egl_surface);
+				}
+
+				w->egl_surface = s->e.create_window_surface(w->egl_display,
+									    w->egl_config,
+									    w->win, NULL);
+
+				s->e.make_current(w->egl_display, w->egl_surface, w->egl_surface, w->egl_context);
+#endif //YAWL_EGL
+			}
+		} break;
 		case XCB_FOCUS_IN:
 			w->focused = true;
 			break;
@@ -1227,7 +1243,6 @@ static bool _YwWGLLoadExtensions(YwState *s)
 {
 	if (!s->wgl.loaded)
 		return false;
-
 
 	YW_LOAD_WGL_FUNC(s->wgl.swap_interval, "wglSwapIntervalEXT");
 
@@ -1400,8 +1415,14 @@ static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 		return 0;
 	case WM_SIZE:
 		if (w) {
-			w->width = LOWORD(lparam);
-			w->height = HIWORD(lparam);
+			size_t newwidth = LOWORD(lparam);
+			size_t newheight = HIWORD(lparam);
+
+			if (new_width != w->width || new_height != w->height) {
+				w->resized=true;
+				w->width = newwidth;
+				w->height = newheight;
+			}
 		}
 		return 0;
 	case WM_INPUT: {
