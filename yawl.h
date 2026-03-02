@@ -296,6 +296,7 @@ typedef struct {
 	EGLContext egl_context;
 	EGLConfig egl_config;
 	EGLDisplay egl_display;
+	bool resized_internal;
 #endif // YAWL_EGL
 } YwWindowData;
 #include <string.h>
@@ -1123,21 +1124,10 @@ static void _YwPollEventsX11(YwWindowData *w)
 			uint16_t new_height = cn->height;
 			if (new_width != w->width || new_height != w->height) {
 				w->resized = true;
-				w->width = new_width;
-				w->height = new_height;
-#ifdef YAWL_EGL
-				if (w->egl_surface != EGL_NO_SURFACE) {
-					s->e.make_current(w->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-					s->e.destroy_surface(w->egl_display, w->egl_surface);
-				}
-
-				w->egl_surface = s->e.create_window_surface(w->egl_display,
-									    w->egl_config,
-									    w->win, NULL);
-
-				s->e.make_current(w->egl_display, w->egl_surface, w->egl_surface, w->egl_context);
-#endif //YAWL_EGL
+				w->resized_internal = true;
 			}
+			w->width = new_width;
+			w->height = new_height;
 		} break;
 		case XCB_FOCUS_IN:
 			w->focused = true;
@@ -1208,6 +1198,21 @@ static void _YwPollEventsX11(YwWindowData *w)
 		}
 		free(ev);
 	}
+#ifdef YAWL_EGL
+	if (w->resized_internal) {
+		w->resized_internal = false;
+		if (w->egl_surface != EGL_NO_SURFACE) {
+			s->e.make_current(w->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+			s->e.destroy_surface(w->egl_display, w->egl_surface);
+		}
+
+		w->egl_surface = s->e.create_window_surface(w->egl_display,
+							    w->egl_config,
+							    w->win, NULL);
+
+		s->e.make_current(w->egl_display, w->egl_surface, w->egl_surface, w->egl_context);
+	}
+#endif //YAWL_EGL
 }
 #endif // YAWL_X11
 
@@ -1418,11 +1423,11 @@ static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 			size_t newwidth = LOWORD(lparam);
 			size_t newheight = HIWORD(lparam);
 
-			if (new_width != w->width || new_height != w->height) {
-				w->resized=true;
-				w->width = newwidth;
-				w->height = newheight;
+			if (newwidth != w->width || newheight != w->height) {
+				w->resized = true;
 			}
+			w->width = newwidth;
+			w->height = newheight;
 		}
 		return 0;
 	case WM_INPUT: {
@@ -1551,10 +1556,22 @@ static bool _YwInitWindowWin32(YwWindowData *w, const char *name)
 	YwState *s = w->state;
 	s->hinstance = GetModuleHandleA(NULL);
 
+	if (w->width == 0 || w->height == 0) {
+		HMONITOR hmon = MonitorFromWindow(NULL, MONITOR_DEFAULTTOPRIMARY);
+		MONITORINFO mi = { sizeof(mi) };
+		if (GetMonitorInfoA(hmon, &mi)) {
+			w->width = mi.rcWork.right - mi.rcWork.left;
+			w->height = mi.rcWork.bottom - mi.rcWork.top;
+		} else {
+			w->width = GetSystemMetrics(SM_CXSCREEN);
+			w->height = GetSystemMetrics(SM_CYSCREEN);
+		}
+	}
 	WNDCLASSA wc = { 0 };
 	wc.lpfnWndProc = _YwWndProc;
 	wc.hInstance = s->hinstance;
 	wc.lpszClassName = "YwWindowClass";
+	// wc.style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
 	wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
 	RegisterClassA(&wc);
 
@@ -1606,6 +1623,7 @@ static bool _YwInitWindowWin32(YwWindowData *w, const char *name)
 	s->wgl.swap_interval(0);
 	return true;
 }
+
 static void _YwPollEventsWin32(YwWindowData *w)
 {
 	MSG msg;
