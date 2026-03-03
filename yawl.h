@@ -336,6 +336,7 @@ YW_EXPORT bool YwKeyDownMods(YwWindowData *w, YwKey key, YwKeyState mod_mask);
 YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindowData *w, ANativeActivity *activity);
 #endif
 
+#endif // INCLUDE_YAWL_YAWL_H_
 #ifdef YAWL_IMPLEMENTATION
 YW_EXPORT bool YwKeyPressedMods(YwWindowData *w, YwKey key, YwKeyState mod_mask)
 {
@@ -1749,5 +1750,3 @@ YW_EXPORT void YwSetVSync(YwWindowData *w, bool enabled)
 }
 
 #endif // YAWL_IMPLEMENTATION
-
-#endif // INCLUDE_YAWL_YAWL_H_
