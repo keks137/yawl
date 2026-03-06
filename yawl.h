@@ -298,7 +298,7 @@ typedef struct {
 	EGLDisplay egl_display;
 	bool resized_internal;
 #endif // YAWL_EGL
-} YwWindowData;
+} YwWindow;
 #include <string.h>
 #ifndef YwMemset
 #define YwMemset(ptr, val, n_bytes) memset(ptr, val, n_bytes)
@@ -317,63 +317,67 @@ typedef struct {
 #define YwAlloca(size) alloca(size)
 #endif
 
-YW_EXPORT bool YwInitWindow(YwState *s, YwWindowData *w, const char *name);
-YW_EXPORT void YwBeginDrawing(YwWindowData *w);
-YW_EXPORT void YwEndDrawing(YwWindowData *w);
+YW_EXPORT bool YwInitWindow(YwState *s, YwWindow *w, const char *name);
+YW_EXPORT void YwBeginDrawing(YwWindow *w);
+YW_EXPORT void YwEndDrawing(YwWindow *w);
 YW_EXPORT bool YwGLLoadProc(YwState *s, void **proc, const char *name);
-YW_EXPORT void YwGLMakeCurrent(YwWindowData *w);
-YW_EXPORT void YwSetVSync(YwWindowData *w, bool enabled);
-YW_EXPORT bool YwNextKeyEvent(YwWindowData *w, YwKeyEvent *out);
-YW_EXPORT void YwPollEvents(YwWindowData *w);
-YW_EXPORT bool YwKeyPressed(YwWindowData *w, YwKey key);
-YW_EXPORT bool YwKeyReleased(YwWindowData *w, YwKey key);
-YW_EXPORT bool YwKeyDown(YwWindowData *w, YwKey key);
-YW_EXPORT bool YwKeyPressedMods(YwWindowData *w, YwKey key, YwKeyState mod_mask);
-YW_EXPORT bool YwKeyReleasedMods(YwWindowData *w, YwKey key, YwKeyState mod_mask);
-YW_EXPORT bool YwKeyDownMods(YwWindowData *w, YwKey key, YwKeyState mod_mask);
+YW_EXPORT void YwGLMakeCurrent(YwWindow *w);
+YW_EXPORT void YwSetVSync(YwWindow *w, bool enabled);
+YW_EXPORT bool YwNextKeyEvent(YwWindow *w, YwKeyEvent *out);
+YW_EXPORT void YwPollEvents(YwWindow *w);
+YW_EXPORT bool YwKeyPressed(YwWindow *w, YwKey key);
+YW_EXPORT bool YwKeyReleased(YwWindow *w, YwKey key);
+YW_EXPORT bool YwKeyDown(YwWindow *w, YwKey key);
+YW_EXPORT bool YwKeyPressedMods(YwWindow *w, YwKey key, YwKeyState mod_mask);
+YW_EXPORT bool YwKeyReleasedMods(YwWindow *w, YwKey key, YwKeyState mod_mask);
+YW_EXPORT bool YwKeyDownMods(YwWindow *w, YwKey key, YwKeyState mod_mask);
 
 #ifdef YAWL_ANDROID
-YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindowData *w, ANativeActivity *activity);
+YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindow *w, ANativeActivity *activity);
 #endif
 
 #endif // INCLUDE_YAWL_YAWL_H_
+
 #ifdef YAWL_IMPLEMENTATION
-YW_EXPORT bool YwKeyPressedMods(YwWindowData *w, YwKey key, YwKeyState mod_mask)
+#ifndef YAWL_IMPLEMENTATION_GUARD
+#define YAWL_IMPLEMENTATION_GUARD
+
+YW_EXPORT bool YwKeyPressedMods(YwWindow *w, YwKey key, YwKeyState mod_mask)
 {
 	if (w->keys.current[key] && !w->keys.prev[key] && (w->keys.current[key] & mod_mask)) {
 		return true;
 	}
 	return false;
 }
-YW_EXPORT bool YwKeyReleasedMods(YwWindowData *w, YwKey key, YwKeyState mod_mask)
+YW_EXPORT bool YwKeyReleasedMods(YwWindow *w, YwKey key, YwKeyState mod_mask)
 {
 	if (!w->keys.current[key] && w->keys.prev[key] && (w->keys.prev[key] & mod_mask)) { // NOTE: we check mask on prev because not pressed keys dont hold state
 		return true;
 	}
 	return false;
 }
-YW_EXPORT bool YwKeyDownMods(YwWindowData *w, YwKey key, YwKeyState mod_mask)
+YW_EXPORT bool YwKeyDownMods(YwWindow *w, YwKey key, YwKeyState mod_mask)
 {
 	if (w->keys.current[key] && (w->keys.current[key] & mod_mask)) {
 		return true;
 	}
 	return false;
 }
-YW_EXPORT bool YwKeyPressed(YwWindowData *w, YwKey key)
+YW_EXPORT bool YwKeyPressed(YwWindow *w, YwKey key)
 {
 	if (w->keys.current[key] && !w->keys.prev[key]) {
 		return true;
 	}
 	return false;
 }
-YW_EXPORT bool YwKeyReleased(YwWindowData *w, YwKey key)
+YW_EXPORT bool YwKeyReleased(YwWindow *w, YwKey key)
 {
 	if (!w->keys.current[key] && w->keys.prev[key]) {
 		return true;
 	}
 	return false;
 }
-YW_EXPORT bool YwKeyDown(YwWindowData *w, YwKey key)
+YW_EXPORT bool YwKeyDown(YwWindow *w, YwKey key)
 {
 	if (w->keys.current[key]) {
 		return true;
@@ -403,7 +407,7 @@ YW_EXPORT bool YwKeyDown(YwWindowData *w, YwKey key)
 		(buf)->write = _next;                               \
 	} while (0)
 
-static void _YwUnfocusInputRelease(YwWindowData *w)
+static void _YwUnfocusInputRelease(YwWindow *w)
 {
 	YwKeyEvent e = { 0 };
 	for (size_t i = 0; i < sizeof(w->keys.current); i++) {
@@ -581,7 +585,7 @@ static YwKey _YwAndroidKeycodeToKey(int32_t keycode)
 
 static void _YwAndroidOnDestroy(ANativeActivity *activity)
 {
-	YwWindowData *w = (YwWindowData *)activity->instance;
+	YwWindow *w = (YwWindowData *)activity->instance;
 	if (w) {
 		char cmd = CMD_DESTROY;
 		write(w->msgwrite, &cmd, 1);
@@ -608,7 +612,7 @@ static void _YwAndroidOnStop(ANativeActivity *activity)
 
 static void _YwAndroidOnWindowFocusChanged(ANativeActivity *activity, int focused)
 {
-	YwWindowData *w = (YwWindowData *)activity->instance;
+	YwWindow *w = (YwWindowData *)activity->instance;
 	if (w) {
 		if (focused) {
 			w->focused = true;
@@ -624,7 +628,7 @@ static void _YwAndroidOnWindowFocusChanged(ANativeActivity *activity, int focuse
 
 static void _YwAndroidOnNativeWindowCreated(ANativeActivity *activity, ANativeWindow *window)
 {
-	YwWindowData *w = (YwWindowData *)activity->instance;
+	YwWindow *w = (YwWindowData *)activity->instance;
 	if (w) {
 		w->native_window = window;
 		char cmd = CMD_WINDOW_CREATED;
@@ -635,7 +639,7 @@ static void _YwAndroidOnNativeWindowCreated(ANativeActivity *activity, ANativeWi
 static void _YwAndroidOnNativeWindowDestroyed(ANativeActivity *activity, ANativeWindow *window)
 {
 	(void)window;
-	YwWindowData *w = (YwWindowData *)activity->instance;
+	YwWindow *w = (YwWindowData *)activity->instance;
 	if (w) {
 		char cmd = CMD_WINDOW_DESTROYED;
 		write(w->msgwrite, &cmd, 1);
@@ -644,7 +648,7 @@ static void _YwAndroidOnNativeWindowDestroyed(ANativeActivity *activity, ANative
 
 static void _YwAndroidOnInputQueueCreated(ANativeActivity *activity, AInputQueue *queue)
 {
-	YwWindowData *w = (YwWindowData *)activity->instance;
+	YwWindow *w = (YwWindowData *)activity->instance;
 	if (w) {
 		w->input_queue = queue;
 		AInputQueue_attachLooper(queue, w->looper, ALOOPER_POLL_CALLBACK, NULL, NULL);
@@ -663,7 +667,7 @@ static int _YwAndroidPipeCallback(int fd, int events, void *data)
 {
 	(void)fd;
 	(void)events;
-	YwWindowData *w = (YwWindowData *)data;
+	YwWindow *w = (YwWindowData *)data;
 	YwState *s = w->state;
 	if (!s)
 		return 1;
@@ -706,7 +710,7 @@ static int _YwAndroidPipeCallback(int fd, int events, void *data)
 	return 1;
 }
 
-YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindowData *w, ANativeActivity *activity)
+YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindow *w, ANativeActivity *activity)
 {
 	w->state = s;
 	w->activity = activity;
@@ -729,7 +733,7 @@ YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindowData *w, ANativeActivity
 	fcntl(w->msgread, F_SETFL, O_NONBLOCK);
 }
 
-static bool _YwInitWindowAndroid(YwWindowData *w, const char *name)
+static bool _YwInitWindowAndroid(YwWindow *w, const char *name)
 {
 	YwState *s = w->state;
 	(void)name;
@@ -779,7 +783,7 @@ static bool _YwInitWindowAndroid(YwWindowData *w, const char *name)
 	return true;
 }
 
-static void _YwPollEventsAndroid(YwWindowData *w)
+static void _YwPollEventsAndroid(YwWindow *w)
 {
 	ALooper_pollOnce(0, NULL, NULL, NULL);
 	if (w->input_queue) {
@@ -977,7 +981,7 @@ static xcb_screen_t *_YwGetScreen(YwState *s, xcb_connection_t *c)
 	return NULL;
 }
 
-static bool _YwEGLCreateContextX11(YwState *s, YwWindowData *w)
+static bool _YwEGLCreateContextX11(YwState *s, YwWindow *w)
 {
 #ifdef YAWL_X11
 	w->egl_display = s->e.get_platform_display(EGL_PLATFORM_XCB_EXT, w->conn, NULL);
@@ -1025,7 +1029,7 @@ static bool _YwEGLCreateContextX11(YwState *s, YwWindowData *w)
 	s->e.swap_interval(w->egl_display, 0); // disable VSYNC
 	return true;
 }
-static bool _YwInitWindowX11(YwWindowData *w, const char *name)
+static bool _YwInitWindowX11(YwWindow *w, const char *name)
 {
 	YwState *s = w->state;
 	if (!s->x.loaded)
@@ -1103,7 +1107,7 @@ static bool _YwInitWindowX11(YwWindowData *w, const char *name)
 	return true;
 }
 
-static void _YwPollEventsX11(YwWindowData *w)
+static void _YwPollEventsX11(YwWindow *w)
 {
 	YwState *s = w->state;
 	xcb_generic_event_t *ev;
@@ -1199,6 +1203,8 @@ static void _YwPollEventsX11(YwWindowData *w)
 		}
 		free(ev);
 	}
+	//hacky thing:
+	/*
 #ifdef YAWL_EGL
 	if (w->resized_internal) {
 		w->resized_internal = false;
@@ -1214,6 +1220,7 @@ static void _YwPollEventsX11(YwWindowData *w)
 		s->e.make_current(w->egl_display, w->egl_surface, w->egl_surface, w->egl_context);
 	}
 #endif //YAWL_EGL
+       */
 }
 #endif // YAWL_X11
 
@@ -1406,7 +1413,7 @@ static bool _YwWGLLoad(YwState *s)
 
 static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
-	YwWindowData *w = (YwWindowData *)GetWindowLongPtrA(hwnd, GWLP_USERDATA);
+	YwWindow *w = (YwWindow *)GetWindowLongPtrA(hwnd, GWLP_USERDATA);
 
 	switch (msg) {
 	case WM_CREATE: {
@@ -1552,7 +1559,7 @@ static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 	return DefWindowProcA(hwnd, msg, wparam, lparam);
 }
 #include <hidusage.h>
-static bool _YwInitWindowWin32(YwWindowData *w, const char *name)
+static bool _YwInitWindowWin32(YwWindow *w, const char *name)
 {
 	YwState *s = w->state;
 	s->hinstance = GetModuleHandleA(NULL);
@@ -1625,7 +1632,7 @@ static bool _YwInitWindowWin32(YwWindowData *w, const char *name)
 	return true;
 }
 
-static void _YwPollEventsWin32(YwWindowData *w)
+static void _YwPollEventsWin32(YwWindow *w)
 {
 	MSG msg;
 	while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
@@ -1644,7 +1651,7 @@ static bool _YwInit(YwState *s)
 	return true;
 }
 
-YW_EXPORT void YwPollEvents(YwWindowData *w)
+YW_EXPORT void YwPollEvents(YwWindow *w)
 {
 	YW_STATIC_ASSERT(sizeof(w->keys.prev) == sizeof(w->keys.current), "the hell did you do");
 	YwMemcpy(w->keys.prev, w->keys.current, sizeof(w->keys.prev));
@@ -1660,7 +1667,7 @@ YW_EXPORT void YwPollEvents(YwWindowData *w)
 #endif
 }
 
-YW_EXPORT bool YwInitWindow(YwState *s, YwWindowData *w, const char *name)
+YW_EXPORT bool YwInitWindow(YwState *s, YwWindow *w, const char *name)
 {
 	if (!s->initialized) {
 		if (!_YwInit(s))
@@ -1679,11 +1686,11 @@ YW_EXPORT bool YwInitWindow(YwState *s, YwWindowData *w, const char *name)
 	return false;
 #endif
 }
-YW_EXPORT void YwBeginDrawing(YwWindowData *w)
+YW_EXPORT void YwBeginDrawing(YwWindow *w)
 {
 	(void)w;
 }
-YW_EXPORT void YwGLMakeCurrent(YwWindowData *w)
+YW_EXPORT void YwGLMakeCurrent(YwWindow *w)
 {
 	YwState *s = w->state;
 #ifdef YAWL_EGL
@@ -1695,7 +1702,7 @@ YW_EXPORT void YwGLMakeCurrent(YwWindowData *w)
 	fprintf(stderr, "Yawl: Unsupported platform\n");
 #endif // YAWL_WIN32
 }
-YW_EXPORT void YwEndDrawing(YwWindowData *w)
+YW_EXPORT void YwEndDrawing(YwWindow *w)
 {
 	YwState *s = w->state;
 	// s->x.flush(w->conn);
@@ -1723,7 +1730,7 @@ YW_EXPORT bool YwGLLoadProc(YwState *s, void **proc, const char *name)
 #endif // YAWL_X11
 }
 
-YW_EXPORT bool YwNextKeyEvent(YwWindowData *w, YwKeyEvent *out)
+YW_EXPORT bool YwNextKeyEvent(YwWindow *w, YwKeyEvent *out)
 {
 	struct YwKeyBuffer *kb = &w->key_buf;
 	if (kb->read == kb->write)
@@ -1733,7 +1740,7 @@ YW_EXPORT bool YwNextKeyEvent(YwWindowData *w, YwKeyEvent *out)
 	return true;
 }
 
-YW_EXPORT void YwSetVSync(YwWindowData *w, bool enabled)
+YW_EXPORT void YwSetVSync(YwWindow *w, bool enabled)
 {
 	YwState *s = w->state;
 	int interval = enabled ? 1 : 0;
@@ -1749,4 +1756,5 @@ YW_EXPORT void YwSetVSync(YwWindowData *w, bool enabled)
 #endif
 }
 
+#endif // YAWL_IMPLEMENTATION_GUARD
 #endif // YAWL_IMPLEMENTATION

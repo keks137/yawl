@@ -6,7 +6,7 @@
 int main()
 {
 	YwState s = { 0 };
-	YwWindowData w = { 0 };
+	YwWindow w = { 0 };
 	YwKeyEvent key_current[YW_KEY_COUNT] = { 0 };
 	YwKeyEvent key_prev[YW_KEY_COUNT] = { 0 };
 	YwInitWindow(&s, &w, "Hi!");
