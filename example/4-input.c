@@ -11,8 +11,7 @@ int main()
 	YwKeyEvent key_prev[YW_KEY_COUNT] = { 0 };
 	YwInitWindow(&s, &w, "Hi!");
 	YwSetVSync(&w, true);
-	struct GLFuncs gl = { 0 };
-	load_gl_functions(&s, &gl);
+	load_gl_functions(&s);
 
 	while (!w.should_close) {
 		YwPollEvents(&w);
@@ -22,14 +21,14 @@ int main()
 			key_current[keyev.key] = keyev;
 		}
 		YwBeginDrawing(&w);
-		gl.ClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+		glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
 		if (YwKeyDown(&w, YW_KEY_B)) {
-			gl.ClearColor(0.0f, 0.0f, 1.0f, 1.0f);
+			glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
 		}
 		if (YwKeyDownMods(&w, YW_KEY_B, YW_KEYMOD_CTRL)) {
-			gl.ClearColor(1.0f, 0.0f, 1.0f, 1.0f);
+			glClearColor(1.0f, 0.0f, 1.0f, 1.0f);
 		}
-		gl.Clear(GL_COLOR_BUFFER_BIT);
+		glClear(GL_COLOR_BUFFER_BIT);
 		YwEndDrawing(&w);
 	}
 }
