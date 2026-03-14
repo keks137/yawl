@@ -2,11 +2,12 @@
 #define INCLUDE_SRC_LOADOPENGL_H_
 
 #include "yawl.h"
+bool load_gl_functions(YwState *s);
 #ifdef YAWL_ANDROID
+
 #include <GLES3/gl3.h>
 #else
 #include <GL/glcorearb.h>
-#endif // YAWL_ANDROID
 #include <stdbool.h>
 
 extern PFNGLVERTEXATTRIBIPOINTERPROC glVertexAttribIPointer;
@@ -56,10 +57,13 @@ extern PFNGLENABLEPROC glEnable;
 extern PFNGLCULLFACEPROC glCullFace;
 extern PFNGLUNIFORM3FPROC glUniform3f;
 extern PFNGLUNIFORM2FPROC glUniform2f;
-bool load_gl_functions(YwState *s);
+extern PFNGLGETTEXPARAMETERIVPROC glGetTexParameteriv;
+#endif // YAWL_ANDROID
 
 #ifdef LOADOPENGL_IMPLEMENTATION
-#include "loadopengl.h"
+#ifdef YAWL_ANDROID
+#define YW_LOAD_GL_FUNC(dest) (void)0
+#else
 #define YW_LOAD_GL_FUNC(dest)                                          \
 	do {                                                           \
 		if (!YwGLLoadProc(s, (void **)&dest, #dest)) {         \
@@ -68,6 +72,7 @@ bool load_gl_functions(YwState *s);
 		}                                                      \
 	} while (0)
 
+PFNGLGETTEXPARAMETERIVPROC glGetTexParameteriv = NULL;
 PFNGLVERTEXATTRIBIPOINTERPROC glVertexAttribIPointer = NULL;
 PFNGLUNIFORM1FPROC glUniform1f = NULL;
 PFNGLUNIFORM3FVPROC glUniform3fv = NULL;
@@ -165,9 +170,11 @@ bool load_gl_functions(YwState *s)
 	YW_LOAD_GL_FUNC(glUniform3fv);
 	YW_LOAD_GL_FUNC(glUniform1f);
 	YW_LOAD_GL_FUNC(glVertexAttribIPointer);
+	YW_LOAD_GL_FUNC(glGetTexParameteriv);
 
 	return true;
 }
 
+#endif // YAWL_ANDROID
 #endif // LOADOPENGL_IMPLEMENTATION
 #endif // INCLUDE_SRC_LOADOPENGL_H_

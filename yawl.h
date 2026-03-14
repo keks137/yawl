@@ -585,7 +585,7 @@ static YwKey _YwAndroidKeycodeToKey(int32_t keycode)
 
 static void _YwAndroidOnDestroy(ANativeActivity *activity)
 {
-	YwWindow *w = (YwWindowData *)activity->instance;
+	YwWindow *w = (YwWindow *)activity->instance;
 	if (w) {
 		char cmd = CMD_DESTROY;
 		write(w->msgwrite, &cmd, 1);
@@ -612,7 +612,7 @@ static void _YwAndroidOnStop(ANativeActivity *activity)
 
 static void _YwAndroidOnWindowFocusChanged(ANativeActivity *activity, int focused)
 {
-	YwWindow *w = (YwWindowData *)activity->instance;
+	YwWindow *w = (YwWindow *)activity->instance;
 	if (w) {
 		if (focused) {
 			w->focused = true;
@@ -628,7 +628,7 @@ static void _YwAndroidOnWindowFocusChanged(ANativeActivity *activity, int focuse
 
 static void _YwAndroidOnNativeWindowCreated(ANativeActivity *activity, ANativeWindow *window)
 {
-	YwWindow *w = (YwWindowData *)activity->instance;
+	YwWindow *w = (YwWindow *)activity->instance;
 	if (w) {
 		w->native_window = window;
 		char cmd = CMD_WINDOW_CREATED;
@@ -639,7 +639,7 @@ static void _YwAndroidOnNativeWindowCreated(ANativeActivity *activity, ANativeWi
 static void _YwAndroidOnNativeWindowDestroyed(ANativeActivity *activity, ANativeWindow *window)
 {
 	(void)window;
-	YwWindow *w = (YwWindowData *)activity->instance;
+	YwWindow *w = (YwWindow *)activity->instance;
 	if (w) {
 		char cmd = CMD_WINDOW_DESTROYED;
 		write(w->msgwrite, &cmd, 1);
@@ -648,7 +648,7 @@ static void _YwAndroidOnNativeWindowDestroyed(ANativeActivity *activity, ANative
 
 static void _YwAndroidOnInputQueueCreated(ANativeActivity *activity, AInputQueue *queue)
 {
-	YwWindow *w = (YwWindowData *)activity->instance;
+	YwWindow *w = (YwWindow *)activity->instance;
 	if (w) {
 		w->input_queue = queue;
 		AInputQueue_attachLooper(queue, w->looper, ALOOPER_POLL_CALLBACK, NULL, NULL);
@@ -667,7 +667,7 @@ static int _YwAndroidPipeCallback(int fd, int events, void *data)
 {
 	(void)fd;
 	(void)events;
-	YwWindow *w = (YwWindowData *)data;
+	YwWindow *w = (YwWindow *)data;
 	YwState *s = w->state;
 	if (!s)
 		return 1;
