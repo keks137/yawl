@@ -776,7 +776,9 @@ YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindow *w, ANativeActivity *ac
 	w->msgwrite = pipes[1];
 	fcntl(w->msgread, F_SETFL, O_NONBLOCK);
 
+#ifdef YAWL_ASSETS_HACK
 	_YwExtractAssets(activity->assetManager, activity->internalDataPath);
+#endif // YAWL_ASSETS_HACK
 }
 
 static bool _YwInitWindowAndroid(YwWindow *w, const char *name)
