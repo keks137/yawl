@@ -331,6 +331,7 @@ YW_EXPORT bool YwKeyDown(YwWindow *w, YwKey key);
 YW_EXPORT bool YwKeyPressedMods(YwWindow *w, YwKey key, YwKeyState mod_mask);
 YW_EXPORT bool YwKeyReleasedMods(YwWindow *w, YwKey key, YwKeyState mod_mask);
 YW_EXPORT bool YwKeyDownMods(YwWindow *w, YwKey key, YwKeyState mod_mask);
+YW_EXPORT const char *YwGetBasePath(YwWindow *w);
 
 #ifdef YAWL_ANDROID
 YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindow *w, ANativeActivity *activity);
@@ -710,6 +711,49 @@ static int _YwAndroidPipeCallback(int fd, int events, void *data)
 	return 1;
 }
 
+#include <android/asset_manager.h>
+#include <sys/stat.h>
+static void _YwExtractAssets(AAssetManager *am, const char *out_dir)
+{
+	// NOTE: asset extraction so we can just use fopen on user side
+	AAssetDir *dir = AAssetManager_openDir(am, "");
+	const char *filename;
+
+	char assets_dir[512];
+	snprintf(assets_dir, sizeof(assets_dir), "%s/assets", out_dir);
+
+	struct stat st_dir;
+	if (stat(assets_dir, &st_dir) != 0) {
+		// 0775 permissions: rwxrwxr-x
+		mkdir(assets_dir, 0775);
+	}
+
+	while ((filename = AAssetDir_getNextFileName(dir)) != NULL) {
+		char out_path[512];
+		snprintf(out_path, sizeof(out_path), "%s/assets/%s", out_dir, filename);
+
+		// Skip if exists
+		struct stat st;
+		if (stat(out_path, &st) == 0)
+			continue;
+
+		AAsset *asset = AAssetManager_open(am, filename, AASSET_MODE_STREAMING);
+		if (!asset)
+			continue;
+
+		FILE *out = fopen(out_path, "wb");
+		if (out) {
+			char buf[4096];
+			int n;
+			while ((n = AAsset_read(asset, buf, sizeof(buf))) > 0)
+				fwrite(buf, 1, n, out);
+			fclose(out);
+		}
+		AAsset_close(asset);
+	}
+	AAssetDir_close(dir);
+}
+
 YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindow *w, ANativeActivity *activity)
 {
 	w->state = s;
@@ -731,6 +775,8 @@ YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindow *w, ANativeActivity *ac
 	w->msgread = pipes[0];
 	w->msgwrite = pipes[1];
 	fcntl(w->msgread, F_SETFL, O_NONBLOCK);
+
+	_YwExtractAssets(activity->assetManager, activity->internalDataPath);
 }
 
 static bool _YwInitWindowAndroid(YwWindow *w, const char *name)
@@ -1754,6 +1800,15 @@ YW_EXPORT void YwSetVSync(YwWindow *w, bool enabled)
 #warning Unsupported platform
 	fprintf(stderr, "Yawl: Unsupported platform\n");
 #endif
+}
+
+YW_EXPORT const char *YwGetBasePath(YwWindow *w)
+{
+#ifdef YAWL_ANDROID
+	if (w && w->activity)
+		return w->activity->internalDataPath;
+#endif
+	return "";
 }
 
 #endif // YAWL_IMPLEMENTATION_GUARD

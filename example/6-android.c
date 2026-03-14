@@ -15,7 +15,7 @@
 // Structure to hold our app data (passed to the rendering thread)
 typedef struct {
 	YwState state;
-	YwWindowData window;
+	YwWindow window;
 	ANativeActivity *activity;
 } App;
 
