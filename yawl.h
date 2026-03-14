@@ -104,7 +104,7 @@ typedef enum {
 	YW_KEY_SPACE,
 	YW_KEY_ENTER,
 	YW_KEY_TAB,
-	YW_KEY_ESCAPE,
+	YW_KEY_ESC,
 	YW_KEY_BACKSPACE,
 	YW_KEY_UP,
 	YW_KEY_DOWN,
@@ -552,7 +552,7 @@ static YwKey _YwAndroidKeycodeToKey(int32_t keycode)
 	case AKEYCODE_TAB:
 		return YW_KEY_TAB;
 	case AKEYCODE_ESCAPE:
-		return YW_KEY_ESCAPE;
+		return YW_KEY_ESC;
 	case AKEYCODE_DEL:
 		return YW_KEY_BACKSPACE;
 	case AKEYCODE_DPAD_UP:
@@ -796,6 +796,8 @@ static bool _YwInitWindowAndroid(YwWindow *w, const char *name)
 	while (!w->native_window && !w->should_close) {
 		ALooper_pollOnce(-1, NULL, NULL, NULL);
 	}
+	w->width = ANativeWindow_getWidth(w->native_window);
+	w->height = ANativeWindow_getHeight(w->native_window);
 	if (!s->e.loaded && !_YwEGLLoad(s))
 		return false;
 	if (!w->native_window)
@@ -954,7 +956,7 @@ static YwKey _YwX11KeycodeToKey(uint8_t code)
 	case KEY_TAB:
 		return YW_KEY_TAB;
 	case KEY_ESC:
-		return YW_KEY_ESCAPE;
+		return YW_KEY_ESC;
 	case KEY_BACKSPACE:
 		return YW_KEY_BACKSPACE;
 
@@ -1395,7 +1397,7 @@ static YwKey _YwScancodeToKey(uint16_t scancode)
 	case 0x000f:
 		return YW_KEY_TAB;
 	case 0x0001:
-		return YW_KEY_ESCAPE;
+		return YW_KEY_ESC;
 	case 0x000e:
 		return YW_KEY_BACKSPACE;
 

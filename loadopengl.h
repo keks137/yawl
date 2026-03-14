@@ -10,6 +10,14 @@ bool load_gl_functions(YwState *s);
 #include <GL/glcorearb.h>
 #include <stdbool.h>
 
+extern PFNGLPIXELSTOREIPROC glPixelStorei;
+extern PFNGLGETTEXLEVELPARAMETERIVPROC glGetTexLevelParameteriv;
+extern PFNGLDISABLEPROC glDisable;
+extern PFNGLISTEXTUREPROC glIsTexture;
+extern PFNGLGETSTRINGIPROC glGetStringi;
+extern PFNGLGETINTEGERVPROC glGetIntegerv;
+extern PFNGLGETSTRINGPROC glGetString;
+extern PFNGLDEBUGMESSAGECALLBACKPROC glDebugMessageCallback;
 extern PFNGLVERTEXATTRIBIPOINTERPROC glVertexAttribIPointer;
 extern PFNGLUNIFORM1FPROC glUniform1f;
 extern PFNGLUNIFORM3FVPROC glUniform3fv;
@@ -77,6 +85,13 @@ extern PFNGLGETTEXPARAMETERIVPROC glGetTexParameteriv;
 		}                                                      \
 	} while (0)
 
+PFNGLGETTEXLEVELPARAMETERIVPROC glGetTexLevelParameteriv = NULL;
+PFNGLDISABLEPROC glDisable = NULL;
+PFNGLISTEXTUREPROC glIsTexture = NULL;
+PFNGLGETSTRINGIPROC glGetStringi = NULL;
+PFNGLGETINTEGERVPROC glGetIntegerv = NULL;
+PFNGLGETSTRINGPROC glGetString = NULL;
+PFNGLDEBUGMESSAGECALLBACKPROC glDebugMessageCallback = NULL;
 PFNGLGETTEXPARAMETERIVPROC glGetTexParameteriv = NULL;
 PFNGLVERTEXATTRIBIPOINTERPROC glVertexAttribIPointer = NULL;
 PFNGLUNIFORM1FPROC glUniform1f = NULL;
@@ -116,6 +131,7 @@ PFNGLBINDTEXTUREPROC glBindTexture = NULL;
 PFNGLTEXIMAGE2DPROC glTexImage2D = NULL;
 PFNGLGENERATEMIPMAPPROC glGenerateMipmap = NULL;
 PFNGLTEXPARAMETERIPROC glTexParameteri = NULL;
+PFNGLPIXELSTOREIPROC glPixelStorei = NULL;
 PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation = NULL;
 PFNGLUNIFORMMATRIX4FVPROC glUniformMatrix4fv = NULL;
 PFNGLGETERRORPROC glGetError = NULL;
@@ -176,6 +192,14 @@ bool load_gl_functions(YwState *s)
 	YW_LOAD_GL_FUNC(glUniform1f);
 	YW_LOAD_GL_FUNC(glVertexAttribIPointer);
 	YW_LOAD_GL_FUNC(glGetTexParameteriv);
+	YW_LOAD_GL_FUNC(glDebugMessageCallback);
+	YW_LOAD_GL_FUNC(glGetString);
+	YW_LOAD_GL_FUNC(glGetIntegerv);
+	YW_LOAD_GL_FUNC(glGetStringi);
+	YW_LOAD_GL_FUNC(glIsTexture);
+	YW_LOAD_GL_FUNC(glDisable);
+	YW_LOAD_GL_FUNC(glPixelStorei);
+	YW_LOAD_GL_FUNC(glGetTexLevelParameteriv);
 
 	return true;
 }
