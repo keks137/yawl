@@ -19,7 +19,7 @@ typedef struct {
 	ANativeActivity *activity;
 } App;
 
-void game_main(YwState *s, YwWindowData *w);
+void game_main(YwState *s, YwWindow *w);
 // The rendering thread function
 static void *rendering_thread(void *arg)
 {
@@ -62,7 +62,7 @@ void ANativeActivity_onCreate(ANativeActivity *activity,
 	// Return immediately – main thread now handles Android events
 }
 
-void game_main(YwState *s, YwWindowData *w)
+void game_main(YwState *s, YwWindow *w)
 {
 	if (!YwInitWindow(s, w, "app")) {
 		LOGI("YwInitWindow failed");
@@ -71,14 +71,13 @@ void game_main(YwState *s, YwWindowData *w)
 
 	YwSetVSync(w, true);
 
-	struct GLFuncs gl = { 0 };
-	load_gl_functions(s, &gl);
-	gl.ClearColor(1.0f, 0.0f, 1.0f, 1.0f);
+	load_gl_functions(s );
+	glClearColor(1.0f, 0.0f, 1.0f, 1.0f);
 
 	while (!w->should_close) {
 		YwPollEvents(w);
 		YwBeginDrawing(w);
-		gl.Clear(GL_COLOR_BUFFER_BIT);
+		glClear(GL_COLOR_BUFFER_BIT);
 		YwEndDrawing(w);
 	}
 }

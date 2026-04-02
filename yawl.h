@@ -145,6 +145,41 @@ struct YwKeyBuffer {
 	uint8_t read;
 };
 
+typedef enum {
+	YW_TOUCH_UNKNOWN = 0,
+	YW_TOUCH_DOWN,
+	YW_TOUCH_MOVE,
+	YW_TOUCH_UP,
+	YW_TOUCH_CANCEL,
+} YwTouchAction;
+
+typedef struct {
+	YwTouchAction action;
+	uint32_t finger;
+	float x, y;
+} YwTouchEvent;
+
+#ifndef YW_TOUCHBUF_SIZE
+#define YW_TOUCHBUF_SIZE 32
+#endif
+
+struct YwTouchBuffer {
+	YwTouchEvent events[YW_TOUCHBUF_SIZE];
+	uint8_t write;
+	uint8_t read;
+};
+
+#define YW_TOUCHBUF_PUSH(buf, ev)                                     \
+	do {                                                          \
+		uint8_t _next = (buf)->write + 1;                     \
+		if (_next >= YW_TOUCHBUF_SIZE)                        \
+			_next = 0;                                    \
+		if (_next == (buf)->read)                             \
+			(buf)->read = (_next + 1) % YW_TOUCHBUF_SIZE; \
+		(buf)->events[(buf)->write] = (ev);                   \
+		(buf)->write = _next;                                 \
+	} while (0)
+
 #ifdef YAWL_EGL
 #include <EGL/egl.h>
 #ifdef YAWL_EGL_EXTENDED
@@ -268,6 +303,8 @@ typedef struct {
 	YwKeysState keys;
 	bool focused;
 
+	struct YwTouchBuffer touch_buf;
+
 #ifdef YAWL_X11
 	xcb_connection_t *conn;
 	xcb_window_t win;
@@ -298,6 +335,7 @@ typedef struct {
 	EGLDisplay egl_display;
 	bool resized_internal;
 #endif // YAWL_EGL
+
 } YwWindow;
 #include <string.h>
 #ifndef YwMemset
@@ -332,6 +370,7 @@ YW_EXPORT bool YwKeyPressedMods(YwWindow *w, YwKey key, YwKeyState mod_mask);
 YW_EXPORT bool YwKeyReleasedMods(YwWindow *w, YwKey key, YwKeyState mod_mask);
 YW_EXPORT bool YwKeyDownMods(YwWindow *w, YwKey key, YwKeyState mod_mask);
 YW_EXPORT const char *YwGetBasePath(YwWindow *w);
+YW_EXPORT bool YwNextTouchEvent(YwWindow *w, YwTouchEvent *out);
 
 #ifdef YAWL_ANDROID
 YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindow *w, ANativeActivity *activity);
@@ -842,7 +881,8 @@ static void _YwPollEventsAndroid(YwWindow *w)
 			if (AInputQueue_preDispatchEvent(w->input_queue, event))
 				continue;
 			int32_t type = AInputEvent_getType(event);
-			if (type == AINPUT_EVENT_TYPE_KEY) {
+			switch (type) {
+			case AINPUT_EVENT_TYPE_KEY: {
 				int32_t action = AKeyEvent_getAction(event);
 				int32_t keycode = AKeyEvent_getKeyCode(event);
 				// int32_t repeat = AKeyEvent_getRepeatCount(event);
@@ -861,8 +901,71 @@ static void _YwPollEventsAndroid(YwWindow *w)
 					// .repeat = (repeat > 0),
 				};
 				YW_KEYBUF_PUSH(&w->key_buf, e);
+			} break;
+			case AINPUT_EVENT_TYPE_MOTION: {
+				int32_t action = AMotionEvent_getAction(event);
+				int32_t masked = action & AMOTION_EVENT_ACTION_MASK;
+
+				switch (masked) {
+				case AMOTION_EVENT_ACTION_MOVE: {
+					int32_t count = AMotionEvent_getPointerCount(event);
+					for (int32_t i = 0; i < count; i++) {
+						YwTouchEvent e = {
+							YW_TOUCH_MOVE,
+							AMotionEvent_getPointerId(event, i),
+							AMotionEvent_getX(event, i),
+							AMotionEvent_getY(event, i)
+						};
+						YW_TOUCHBUF_PUSH(&w->touch_buf, e);
+					}
+					break;
+				}
+
+				case AMOTION_EVENT_ACTION_DOWN:
+				case AMOTION_EVENT_ACTION_POINTER_DOWN: {
+					int32_t idx = (action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+					YwTouchEvent e = {
+						YW_TOUCH_DOWN,
+						AMotionEvent_getPointerId(event, idx),
+						AMotionEvent_getX(event, idx),
+						AMotionEvent_getY(event, idx)
+					};
+					YW_TOUCHBUF_PUSH(&w->touch_buf, e);
+					break;
+				}
+
+				case AMOTION_EVENT_ACTION_UP:
+				case AMOTION_EVENT_ACTION_POINTER_UP: {
+					int32_t idx = (action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+					YwTouchEvent e = {
+						YW_TOUCH_UP,
+						AMotionEvent_getPointerId(event, idx),
+						AMotionEvent_getX(event, idx),
+						AMotionEvent_getY(event, idx)
+					};
+					YW_TOUCHBUF_PUSH(&w->touch_buf, e);
+					break;
+				}
+
+				case AMOTION_EVENT_ACTION_CANCEL: {
+					int32_t idx = (action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+					YwTouchEvent e = {
+						YW_TOUCH_CANCEL,
+						AMotionEvent_getPointerId(event, idx),
+						AMotionEvent_getX(event, idx),
+						AMotionEvent_getY(event, idx)
+					};
+					YW_TOUCHBUF_PUSH(&w->touch_buf, e);
+					break;
+				}
+
+				// Ignore OUTSIDE, HOVER_*, SCROLL, BUTTON_*
+				default:
+					break;
+				}
+			} break;
 			}
-			// TODO: handle motion events (touch)
+
 			AInputQueue_finishEvent(w->input_queue, event, 1);
 		}
 	}
@@ -1813,6 +1916,16 @@ YW_EXPORT const char *YwGetBasePath(YwWindow *w)
 		return w->activity->internalDataPath;
 #endif
 	return "";
+}
+
+YW_EXPORT bool YwNextTouchEvent(YwWindow *w, YwTouchEvent *out)
+{
+	struct YwTouchBuffer *tb = &w->touch_buf;
+	if (tb->read == tb->write)
+		return false;
+	*out = tb->events[tb->read];
+	tb->read = (tb->read + 1) % YW_TOUCHBUF_SIZE;
+	return true;
 }
 
 #endif // YAWL_IMPLEMENTATION_GUARD
