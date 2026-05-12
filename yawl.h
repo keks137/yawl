@@ -262,6 +262,7 @@ struct _YwX11Funcs {
 		xcb_intern_atom_cookie_t cookie,
 		xcb_generic_error_t **e);
 	xcb_generic_event_t *(*poll_for_event)(xcb_connection_t *c);
+	xcb_generic_event_t *(*wait_for_event)(xcb_connection_t *c);
 	void (*request_check)(xcb_connection_t *c, xcb_void_cookie_t cookie);
 	struct xcb_setup_t *(*get_setup)(xcb_connection_t *c);
 	void (*screen_next)(xcb_screen_iterator_t *i);
@@ -302,6 +303,7 @@ typedef struct {
 	YwState *state;
 	YwKeysState keys;
 	bool focused;
+	bool poll_blocking;
 
 	struct YwTouchBuffer touch_buf;
 
@@ -361,6 +363,7 @@ YW_EXPORT void YwEndDrawing(YwWindow *w);
 YW_EXPORT bool YwGLLoadProc(YwState *s, void **proc, const char *name);
 YW_EXPORT void YwGLMakeCurrent(YwWindow *w);
 YW_EXPORT void YwSetVSync(YwWindow *w, bool enabled);
+YW_EXPORT void YwSetPollBlocking(YwWindow *w, bool enabled);
 YW_EXPORT bool YwNextKeyEvent(YwWindow *w, YwKeyEvent *out);
 YW_EXPORT void YwPollEvents(YwWindow *w);
 YW_EXPORT bool YwKeyPressed(YwWindow *w, YwKey key);
@@ -874,7 +877,8 @@ static bool _YwInitWindowAndroid(YwWindow *w, const char *name)
 
 static void _YwPollEventsAndroid(YwWindow *w)
 {
-	ALooper_pollOnce(0, NULL, NULL, NULL);
+	int timeout = w->poll_blocking ? -1 : 0;
+	ALooper_pollOnce(timeout, NULL, NULL, NULL);
 	if (w->input_queue) {
 		AInputEvent *event = NULL;
 		while (AInputQueue_getEvent(w->input_queue, &event) >= 0) {
@@ -1104,6 +1108,7 @@ static bool _YwX11Load(YwState *s)
 		return false;
 	}
 
+	YW_LOAD_SYMBOL(s->x.wait_for_event, lib, "xcb_wait_for_event");
 	YW_LOAD_SYMBOL(s->x.connect, lib, "xcb_connect");
 	YW_LOAD_SYMBOL(s->x.disconnect, lib, "xcb_disconnect");
 	YW_LOAD_SYMBOL(s->x.setup_roots_iterator, lib, "xcb_setup_roots_iterator");
@@ -1264,7 +1269,17 @@ static void _YwPollEventsX11(YwWindow *w)
 {
 	YwState *s = w->state;
 	xcb_generic_event_t *ev;
-	while ((ev = s->x.poll_for_event(w->conn))) {
+	bool use_wait = w->poll_blocking;
+
+	while (1) {
+		if (use_wait) {
+			ev = s->x.wait_for_event(w->conn);
+			use_wait = false;
+		} else {
+			ev = s->x.poll_for_event(w->conn);
+		}
+		if (!ev)
+			break;
 		uint8_t response_type = ev->response_type & ~0x80;
 		switch (response_type) {
 		case XCB_EXPOSE:
@@ -1788,9 +1803,28 @@ static bool _YwInitWindowWin32(YwWindow *w, const char *name)
 static void _YwPollEventsWin32(YwWindow *w)
 {
 	MSG msg;
-	while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+	bool use_getmsg = w->poll_blocking;
+
+	while (1) {
+		BOOL ret;
+		if (use_getmsg) {
+			ret = GetMessageA(&msg, NULL, 0, 0);
+			use_getmsg = false;
+			if (ret == 0) { /* WM_QUIT */
+				w->should_close = true;
+				return;
+			}
+			if (ret == -1) /* error */
+				return;
+		} else {
+			ret = PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE);
+			if (!ret)
+				break;
+		}
+
 		if (msg.message == WM_QUIT) {
 			w->should_close = true;
+			break;
 		}
 		TranslateMessage(&msg);
 		DispatchMessageA(&msg);
@@ -1926,6 +1960,10 @@ YW_EXPORT bool YwNextTouchEvent(YwWindow *w, YwTouchEvent *out)
 	*out = tb->events[tb->read];
 	tb->read = (tb->read + 1) % YW_TOUCHBUF_SIZE;
 	return true;
+}
+YW_EXPORT void YwSetPollBlocking(YwWindow *w, bool enabled)
+{
+	w->poll_blocking = enabled;
 }
 
 #endif // YAWL_IMPLEMENTATION_GUARD
