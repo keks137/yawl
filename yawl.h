@@ -159,6 +159,50 @@ typedef struct {
 	float x, y;
 } YwTouchEvent;
 
+typedef enum {
+	YW_MOUSE_BUTTON_LEFT = 0,
+	YW_MOUSE_BUTTON_RIGHT,
+	YW_MOUSE_BUTTON_MIDDLE,
+	YW_MOUSE_BUTTON_X1,
+	YW_MOUSE_BUTTON_X2,
+	YW_MOUSE_BUTTON_COUNT
+} YwMouseButton;
+
+typedef enum {
+	YW_MOUSE_MOVE = 0,
+	YW_MOUSE_PRESS,
+	YW_MOUSE_RELEASE,
+	YW_MOUSE_SCROLL
+} YwMouseAction;
+
+typedef struct {
+	YwMouseAction action;
+	YwMouseButton button; /* valid for press / release */
+	float x, y; /* window coordinates */
+	float wheel_delta; /* positive → up / right, for scroll events */
+} YwMouseEvent;
+
+#ifndef YW_MOUSEBUF_SIZE
+#define YW_MOUSEBUF_SIZE 256
+#endif
+
+struct YwMouseBuffer {
+	YwMouseEvent events[YW_MOUSEBUF_SIZE];
+	uint16_t write;
+	uint16_t read;
+};
+
+#define YW_MOUSEBUF_PUSH(buf, ev)                                     \
+	do {                                                          \
+		uint16_t _next = (buf)->write + 1;                    \
+		if (_next >= YW_MOUSEBUF_SIZE)                        \
+			_next = 0;                                    \
+		if (_next == (buf)->read)                             \
+			(buf)->read = (_next + 1) % YW_MOUSEBUF_SIZE; \
+		(buf)->events[(buf)->write] = (ev);                   \
+		(buf)->write = _next;                                 \
+	} while (0)
+
 #ifndef YW_TOUCHBUF_SIZE
 #define YW_TOUCHBUF_SIZE 32
 #endif
@@ -306,6 +350,11 @@ typedef struct {
 	bool poll_blocking;
 
 	struct YwTouchBuffer touch_buf;
+	struct YwMouseBuffer mouse_buf;
+	float mouse_x, mouse_y;
+	float mouse_wheel_x, mouse_wheel_y; /* cumulative wheel offset */
+	bool mouse_button_current[YW_MOUSE_BUTTON_COUNT];
+	bool mouse_button_prev[YW_MOUSE_BUTTON_COUNT];
 
 #ifdef YAWL_X11
 	xcb_connection_t *conn;
@@ -374,6 +423,12 @@ YW_EXPORT bool YwKeyReleasedMods(YwWindow *w, YwKey key, YwKeyState mod_mask);
 YW_EXPORT bool YwKeyDownMods(YwWindow *w, YwKey key, YwKeyState mod_mask);
 YW_EXPORT const char *YwGetBasePath(YwWindow *w);
 YW_EXPORT bool YwNextTouchEvent(YwWindow *w, YwTouchEvent *out);
+YW_EXPORT bool YwNextMouseEvent(YwWindow *w, YwMouseEvent *out);
+YW_EXPORT bool YwMouseButtonDown(YwWindow *w, YwMouseButton button);
+YW_EXPORT bool YwMouseButtonPressed(YwWindow *w, YwMouseButton button);
+YW_EXPORT bool YwMouseButtonReleased(YwWindow *w, YwMouseButton button);
+YW_EXPORT void YwGetMousePos(YwWindow *w, float *x, float *y);
+YW_EXPORT void YwGetMouseWheel(YwWindow *w, float *x, float *y);
 
 #ifdef YAWL_ANDROID
 YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindow *w, ANativeActivity *activity);
@@ -382,6 +437,8 @@ YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindow *w, ANativeActivity *ac
 #endif // INCLUDE_YAWL_YAWL_H_
 
 #ifdef YAWL_IMPLEMENTATION
+#ifndef YAWL_IMPLEMENTATION_GUARD
+#define YAWL_IMPLEMENTATION_GUARD
 
 YW_EXPORT bool YwKeyPressedMods(YwWindow *w, YwKey key, YwKeyState mod_mask)
 {
@@ -425,6 +482,38 @@ YW_EXPORT bool YwKeyDown(YwWindow *w, YwKey key)
 	}
 	return false;
 }
+
+YW_EXPORT bool YwMouseButtonDown(YwWindow *w, YwMouseButton button)
+{
+	if (button < YW_MOUSE_BUTTON_COUNT)
+		return w->mouse_button_current[button];
+	return false;
+}
+
+YW_EXPORT bool YwMouseButtonPressed(YwWindow *w, YwMouseButton button)
+{
+	if (button < YW_MOUSE_BUTTON_COUNT)
+		return w->mouse_button_current[button] && !w->mouse_button_prev[button];
+	return false;
+}
+
+YW_EXPORT bool YwMouseButtonReleased(YwWindow *w, YwMouseButton button)
+{
+	if (button < YW_MOUSE_BUTTON_COUNT)
+		return !w->mouse_button_current[button] && w->mouse_button_prev[button];
+	return false;
+}
+
+YW_EXPORT bool YwNextMouseEvent(YwWindow *w, YwMouseEvent *out)
+{
+	struct YwMouseBuffer *mb = &w->mouse_buf;
+	if (mb->read == mb->write)
+		return false;
+	*out = mb->events[mb->read];
+	mb->read = (mb->read + 1) % YW_MOUSEBUF_SIZE;
+	return true;
+}
+
 #ifdef __linux__
 #include <dlfcn.h>
 #define YW_LOAD_SYMBOL(sym, lib, name)                                   \
@@ -873,6 +962,89 @@ static bool _YwInitWindowAndroid(YwWindow *w, const char *name)
 	return true;
 }
 
+#define AXIS_HSCROLL 0xa
+#define AXIS_VSCROLL 0x9
+static void _YwAndroidHandleMouseEvent(YwWindow *w, AInputEvent *event)
+{
+	int32_t source = AInputEvent_getSource(event);
+	if (!(source & AINPUT_SOURCE_MOUSE))
+		return;
+
+	int32_t action = AMotionEvent_getAction(event);
+	switch (action) {
+	case AMOTION_EVENT_ACTION_HOVER_MOVE: {
+		float x = AMotionEvent_getX(event, 0);
+		float y = AMotionEvent_getY(event, 0);
+		w->mouse_x = x;
+		w->mouse_y = y;
+		YwMouseEvent me = { YW_MOUSE_MOVE, 0, x, y, 0 };
+		YW_MOUSEBUF_PUSH(&w->mouse_buf, me);
+		break;
+	}
+	case AMOTION_EVENT_ACTION_DOWN:
+	case AMOTION_EVENT_ACTION_UP: {
+		float x = AMotionEvent_getX(event, 0);
+		float y = AMotionEvent_getY(event, 0);
+		w->mouse_x = x;
+		w->mouse_y = y;
+
+		int32_t button_code = AMotionEvent_getActionButton(event);
+		YwMouseButton mb;
+		switch (button_code) {
+		case AMOTION_EVENT_BUTTON_PRIMARY:
+			mb = YW_MOUSE_BUTTON_LEFT;
+			break;
+		case AMOTION_EVENT_BUTTON_SECONDARY:
+			mb = YW_MOUSE_BUTTON_RIGHT;
+			break;
+		case AMOTION_EVENT_BUTTON_TERTIARY:
+			mb = YW_MOUSE_BUTTON_MIDDLE;
+			break;
+		case AMOTION_EVENT_BUTTON_BACK:
+			mb = YW_MOUSE_BUTTON_X1;
+			break;
+		case AMOTION_EVENT_BUTTON_FORWARD:
+			mb = YW_MOUSE_BUTTON_X2;
+			break;
+		default:
+			mb = YW_MOUSE_BUTTON_LEFT;
+			break; // fallback
+		}
+
+		bool pressed = (action == AMOTION_EVENT_ACTION_DOWN);
+		if (mb < YW_MOUSE_BUTTON_COUNT)
+			w->mouse_button_current[mb] = pressed;
+
+		YwMouseEvent me;
+		me.action = pressed ? YW_MOUSE_PRESS : YW_MOUSE_RELEASE;
+		me.button = mb;
+		me.x = x;
+		me.y = y;
+		me.wheel_delta = 0;
+		YW_MOUSEBUF_PUSH(&w->mouse_buf, me);
+		break;
+	}
+	case AMOTION_EVENT_ACTION_SCROLL: {
+		float hscroll = AMotionEvent_getAxisValue(event, AXIS_HSCROLL, 0);
+		float vscroll = AMotionEvent_getAxisValue(event, AXIS_VSCROLL, 0);
+		w->mouse_wheel_x += hscroll;
+		w->mouse_wheel_y += vscroll;
+
+		if (hscroll != 0.0f) {
+			YwMouseEvent me = { YW_MOUSE_SCROLL, 0, w->mouse_x, w->mouse_y, hscroll };
+			YW_MOUSEBUF_PUSH(&w->mouse_buf, me);
+		}
+		if (vscroll != 0.0f) {
+			YwMouseEvent me = { YW_MOUSE_SCROLL, 0, w->mouse_x, w->mouse_y, vscroll };
+			YW_MOUSEBUF_PUSH(&w->mouse_buf, me);
+		}
+		break;
+	}
+	default:
+		break;
+	}
+}
+
 static void _YwPollEventsAndroid(YwWindow *w)
 {
 	int timeout = w->poll_blocking ? -1 : 0;
@@ -975,6 +1147,23 @@ static void _YwPollEventsAndroid(YwWindow *w)
 #endif //YAWL_ANDROID //YAWL_ANDROID
 
 #ifdef YAWL_X11
+static YwMouseButton _YwX11ButtonToMouse(uint8_t button)
+{
+	switch (button) {
+	case 1:
+		return YW_MOUSE_BUTTON_LEFT;
+	case 2:
+		return YW_MOUSE_BUTTON_MIDDLE;
+	case 3:
+		return YW_MOUSE_BUTTON_RIGHT;
+	case 8:
+		return YW_MOUSE_BUTTON_X1;
+	case 9:
+		return YW_MOUSE_BUTTON_X2;
+	default:
+		return YW_MOUSE_BUTTON_LEFT;
+	}
+}
 static YwKey _YwX11KeycodeToKey(uint8_t code)
 {
 	// Convert X11 keycode to Linux evdev scancode
@@ -1208,7 +1397,8 @@ static bool _YwInitWindowX11(YwWindow *w, const char *name)
 	uint32_t mask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
 	uint32_t values[2] = {
 		w->screen->black_pixel,
-		XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE | XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_FOCUS_CHANGE
+		XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE | XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_FOCUS_CHANGE | XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE |
+			XCB_EVENT_MASK_POINTER_MOTION
 	};
 
 	s->x.create_window(
@@ -1364,6 +1554,67 @@ static void _YwPollEventsX11(YwWindow *w)
 			w->keys.current[key] = pressed_data;
 			YwKeyEvent e = { .key = key, .pressed = pressed_data };
 			YW_KEYBUF_PUSH(&w->key_buf, e);
+			break;
+		}
+		case XCB_BUTTON_PRESS:
+		case XCB_BUTTON_RELEASE: {
+			xcb_button_press_event_t *be = (xcb_button_press_event_t *)ev;
+			float mx = be->event_x, my = be->event_y;
+			w->mouse_x = mx;
+			w->mouse_y = my;
+			uint8_t btn = be->detail;
+			switch (btn) {
+			case 4: /* wheel up */
+				w->mouse_wheel_y += 1.0f;
+				{
+					YwMouseEvent me = { YW_MOUSE_SCROLL, 0, mx, my, 1.0f };
+					YW_MOUSEBUF_PUSH(&w->mouse_buf, me);
+				}
+				break;
+			case 5: /* wheel down */
+				w->mouse_wheel_y -= 1.0f;
+				{
+					YwMouseEvent me = { YW_MOUSE_SCROLL, 0, mx, my, -1.0f };
+					YW_MOUSEBUF_PUSH(&w->mouse_buf, me);
+				}
+				break;
+			case 6: /* horizontal wheel left */
+				w->mouse_wheel_x -= 1.0f;
+				{
+					YwMouseEvent me = { YW_MOUSE_SCROLL, 0, mx, my, -1.0f };
+					YW_MOUSEBUF_PUSH(&w->mouse_buf, me);
+				}
+				break;
+			case 7: /* horizontal wheel right */
+				w->mouse_wheel_x += 1.0f;
+				{
+					YwMouseEvent me = { YW_MOUSE_SCROLL, 0, mx, my, 1.0f };
+					YW_MOUSEBUF_PUSH(&w->mouse_buf, me);
+				}
+				break;
+			default: {
+				bool pressed = (response_type == XCB_BUTTON_PRESS);
+				YwMouseButton mb = _YwX11ButtonToMouse(btn);
+				if (mb < YW_MOUSE_BUTTON_COUNT)
+					w->mouse_button_current[mb] = pressed;
+				YwMouseEvent me;
+				me.action = pressed ? YW_MOUSE_PRESS : YW_MOUSE_RELEASE;
+				me.button = mb;
+				me.x = mx;
+				me.y = my;
+				me.wheel_delta = 0;
+				YW_MOUSEBUF_PUSH(&w->mouse_buf, me);
+			}
+			}
+			break;
+		}
+		case XCB_MOTION_NOTIFY: {
+			xcb_motion_notify_event_t *mev = (xcb_motion_notify_event_t *)ev;
+			float mx = mev->event_x, my = mev->event_y;
+			w->mouse_x = mx;
+			w->mouse_y = my;
+			YwMouseEvent me = { YW_MOUSE_MOVE, 0, mx, my, 0 };
+			YW_MOUSEBUF_PUSH(&w->mouse_buf, me);
 			break;
 		}
 		}
@@ -1708,6 +1959,86 @@ static LRESULT CALLBACK _YwWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 		// DefWindowProc not needed for WM_INPUT if NOLEGACY, but call anyway for cleanliness
 		return DefWindowProcA(hwnd, msg, wparam, lparam);
 	}
+	case WM_MOUSEMOVE: {
+		if (w) {
+			float mx = (float)(int16_t)LOWORD(lparam);
+			float my = (float)(int16_t)HIWORD(lparam);
+			w->mouse_x = mx;
+			w->mouse_y = my;
+			YwMouseEvent me = { YW_MOUSE_MOVE, 0, mx, my, 0 };
+			YW_MOUSEBUF_PUSH(&w->mouse_buf, me);
+		}
+		return 0;
+	}
+	case WM_LBUTTONDOWN:
+	case WM_LBUTTONUP:
+	case WM_RBUTTONDOWN:
+	case WM_RBUTTONUP:
+	case WM_MBUTTONDOWN:
+	case WM_MBUTTONUP:
+	case WM_XBUTTONDOWN:
+	case WM_XBUTTONUP: {
+		if (!w)
+			return 0;
+		float mx = (float)(int16_t)LOWORD(lparam);
+		float my = (float)(int16_t)HIWORD(lparam);
+		w->mouse_x = mx;
+		w->mouse_y = my;
+
+		bool pressed = (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN ||
+				msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN);
+		YwMouseButton mb;
+		switch (msg) {
+		case WM_LBUTTONDOWN:
+		case WM_LBUTTONUP:
+			mb = YW_MOUSE_BUTTON_LEFT;
+			break;
+		case WM_RBUTTONDOWN:
+		case WM_RBUTTONUP:
+			mb = YW_MOUSE_BUTTON_RIGHT;
+			break;
+		case WM_MBUTTONDOWN:
+		case WM_MBUTTONUP:
+			mb = YW_MOUSE_BUTTON_MIDDLE;
+			break;
+		case WM_XBUTTONDOWN:
+		case WM_XBUTTONUP:
+			mb = (GET_XBUTTON_WPARAM(wparam) == XBUTTON1) ? YW_MOUSE_BUTTON_X1 : YW_MOUSE_BUTTON_X2;
+			break;
+		default:
+			mb = YW_MOUSE_BUTTON_LEFT;
+			break;
+		}
+		if (mb < YW_MOUSE_BUTTON_COUNT)
+			w->mouse_button_current[mb] = pressed;
+
+		YwMouseEvent me;
+		me.action = pressed ? YW_MOUSE_PRESS : YW_MOUSE_RELEASE;
+		me.button = mb;
+		me.x = mx;
+		me.y = my;
+		me.wheel_delta = 0;
+		YW_MOUSEBUF_PUSH(&w->mouse_buf, me);
+		return 0;
+	}
+	case WM_MOUSEWHEEL: {
+		if (!w)
+			return 0;
+		float delta = (float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA;
+		w->mouse_wheel_y += delta;
+		YwMouseEvent me = { YW_MOUSE_SCROLL, 0, w->mouse_x, w->mouse_y, delta };
+		YW_MOUSEBUF_PUSH(&w->mouse_buf, me);
+		return 0;
+	}
+	case WM_MOUSEHWHEEL: {
+		if (!w)
+			return 0;
+		float delta = (float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA;
+		w->mouse_wheel_x += delta;
+		YwMouseEvent me = { YW_MOUSE_SCROLL, 0, w->mouse_x, w->mouse_y, delta };
+		YW_MOUSEBUF_PUSH(&w->mouse_buf, me);
+		return 0;
+	}
 	case WM_SETFOCUS:
 		if (w)
 			w->focused = true;
@@ -1964,4 +2295,5 @@ YW_EXPORT void YwSetPollBlocking(YwWindow *w, bool enabled)
 	w->poll_blocking = enabled;
 }
 
+#endif //YAWL_IMPLEMENTATION_GUARD
 #endif // YAWL_IMPLEMENTATION
