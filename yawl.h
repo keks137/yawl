@@ -382,8 +382,6 @@ YW_EXPORT void YwAndroidSetActivity(YwState *s, YwWindow *w, ANativeActivity *ac
 #endif // INCLUDE_YAWL_YAWL_H_
 
 #ifdef YAWL_IMPLEMENTATION
-#ifndef YAWL_IMPLEMENTATION_GUARD
-#define YAWL_IMPLEMENTATION_GUARD
 
 YW_EXPORT bool YwKeyPressedMods(YwWindow *w, YwKey key, YwKeyState mod_mask)
 {
@@ -1966,5 +1964,4 @@ YW_EXPORT void YwSetPollBlocking(YwWindow *w, bool enabled)
 	w->poll_blocking = enabled;
 }
 
-#endif // YAWL_IMPLEMENTATION_GUARD
 #endif // YAWL_IMPLEMENTATION
